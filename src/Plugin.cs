@@ -72,15 +72,6 @@ namespace MoaiEnemy
 
             // debug phase
             Debug.Log("MOAI ENEMY BUNDLE: " + Assets.MainAssetBundle.ToString());
-            Debug.Log("MOAINORM ENEMY: " + MoaiEnemy);
-            Debug.Log("MOAINORM TK: " + tlTerminalKeyword);
-            Debug.Log("MOAINORM TN: " + tlTerminalNode);
-            Debug.Log("MOAIBLUE ENEMY: " + MoaiBlue);
-            Debug.Log("MOAIBLUE TK: " + MoaiBlueTerminalNode);
-            Debug.Log("MOAIBLUE TN: " + MoaiBlueTerminalKeyword);
-            Debug.Log("RED ENEMY: " + MoaiRed);
-            Debug.Log("RED TK: " + MoaiRedTerminalNode);
-            Debug.Log("RED TN: " + MoaiRedTerminalKeyword);
 
             UnityEngine.Random.InitState((int)System.DateTime.Now.Ticks);
 
@@ -241,6 +232,7 @@ namespace MoaiEnemy
                 string sAssemblyLocation = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
 
                 MainAssetBundle = AssetBundle.LoadFromFile(Path.Combine(sAssemblyLocation, "moaibundle"));
+
                 if (MainAssetBundle == null)
                 {
                     Plugin.Logger.LogError("Failed to load custom assets.");

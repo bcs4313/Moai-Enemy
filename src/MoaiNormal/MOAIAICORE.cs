@@ -8,6 +8,8 @@ using static MoaiEnemy.Plugin;
 using Unity.Netcode;
 using UnityEngine.AI;
 using MoaiEnemy.src.Utilities;
+using LethalLib.Modules;
+using static UnityEngine.GraphicsBuffer;
 
 namespace MoaiEnemy.src.MoaiNormal
 {
@@ -38,6 +40,8 @@ namespace MoaiEnemy.src.MoaiNormal
 
         // updated once every 15 seconds
         protected GrabbableObject[] source;
+        protected static List<DeadBodyInfo> dummyBodies = new List<DeadBodyInfo>();
+        protected static int bdyInc = 0;
         protected int sourcecycle = 75;
 
         // extra audio sources
@@ -326,7 +330,7 @@ namespace MoaiEnemy.src.MoaiNormal
             }
 
             // object search and state switch;
-            if (getObj() || getPlayerCorpse()) { SwitchToBehaviourClientRpc((int)State.HeadSwingAttackInProgress); }
+            if (getObj() || corpseAvailable()) { SwitchToBehaviourClientRpc((int)State.HeadSwingAttackInProgress); }
 
             if (FoundClosestPlayerInRange(28f, true) || provokePoints > 0)
             {
@@ -503,7 +507,7 @@ namespace MoaiEnemy.src.MoaiNormal
             }
 
             // object search and state switch;
-            if (getPlayerCorpse()) { SwitchToBehaviourClientRpc((int)State.HeadSwingAttackInProgress); }
+            if (corpseAvailable()) { SwitchToBehaviourClientRpc((int)State.HeadSwingAttackInProgress); }
 
             // good boy state switch
             if (goodBoy > 0)
@@ -571,14 +575,21 @@ namespace MoaiEnemy.src.MoaiNormal
                     {
                         Plugin.networkHandler.s_moaiDestroyBody.SendAllClients(new moaiDestroyBodyPkg(NetworkObject.NetworkObjectId, ply2.NetworkObject.NetworkObjectId));
                     }
+
+                    DeadBodyInfo dmy2 = getDummyCorpse();
+                    if (dmy2)
+                    {
+                        destroyDummyClientRpc(getDummyId(dmy2));
+                    }
                 }
             }
 
             // consumption
             GrabbableObject obj = getObj();
             PlayerControllerB ply = getPlayerCorpse();
+            DeadBodyInfo dmy = getDummyCorpse();
 
-            if ((obj == null && ply == null) || goodBoy > 0)
+            if ((obj == null && ply == null && dmy == null) || goodBoy > 0)
             {
                 //Debug.Log("MOAI: Lost Object. Ending obj search.");
                 eatingHuman = false;
@@ -603,6 +614,27 @@ namespace MoaiEnemy.src.MoaiNormal
                             Debug.Log("MOAI: Attaching Body to Mouth");
                             eatingTimer = 150;
                             Plugin.networkHandler.s_moaiAttachBody.SendAllClients(new moaiAttachBodyPkg(NetworkObject.NetworkObjectId, ply.NetworkObject.NetworkObjectId));
+                            Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "creatureEatHuman"));
+                        }
+                        eatingHuman = true;
+                    }
+                    else
+                    {
+                        eatingHuman = false;
+                    }
+                }
+                else if (dmy)
+                {
+                    targetPlayer = null;
+                    targetNode = dmy.transform;
+                    SetDestinationToPosition(dmy.transform.position);
+                    if (Vector3.Distance(transform.position, dmy.transform.position) < dmy.transform.localScale.magnitude + transform.localScale.magnitude)
+                    {
+                        if (!eatingHuman)
+                        {
+                            Debug.Log("MOAI: Attaching Dummy to Mouth");
+                            eatingTimer = 150;
+                            attachDummyClientRpc(getDummyId(dmy));
                             Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "creatureEatHuman"));
                         }
                         eatingHuman = true;
@@ -684,6 +716,39 @@ namespace MoaiEnemy.src.MoaiNormal
 
         }
 
+        public bool corpseAvailable()
+        {
+            return getPlayerCorpse() || getDummyCorpse();
+        }
+
+        public DeadBodyInfo getDummyCorpse()
+        {
+            try
+            {
+                for (int i = 0; i < dummyBodies.Count; i++)
+                {
+                    GameObject body = dummyBodies[i].gameObject;
+                    var d = 1000f;
+                    if (body != null && body.activeInHierarchy == true && body.transform != null)
+                    {
+                        d = Vector3.Distance(transform.position, body.transform.position);
+                    }
+
+                    if (d < 200.0f)
+                    {
+                        //Debug.Log("found player to eat");
+                        return dummyBodies[i];
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.Log("MOAI: Exception searching for dummy body. Not an error.");
+            }
+
+            return null;
+        }
+
         public PlayerControllerB getPlayerCorpse()
         {
             //Debug.Log("MOAI: Human Food Search");
@@ -709,7 +774,7 @@ namespace MoaiEnemy.src.MoaiNormal
                     }
                 }
             }
-            //Debug.Log("Can't eat anyone...");
+
             return null;
         }
 
@@ -1078,6 +1143,54 @@ namespace MoaiEnemy.src.MoaiNormal
             }
             //Debug.Log("MOAI: Sliding Surface = " + slidingSurface);
             return slidingSurface;
+        }
+
+        public int getDummyId(DeadBodyInfo dmy)
+        {
+            return int.Parse(dmy.name.Split("-")[1]);
+        }
+
+        [ClientRpc]
+        public void createDummyClientRpc(Vector3 targetPos, int dummyId, int attachedLimbTarget)
+        {
+            GameObject ragdollPrefab = StartOfRound.Instance.playerRagdolls[0];
+            GameObject ragdoll = UnityEngine.Object.Instantiate(ragdollPrefab, targetPos, Quaternion.identity);
+            var bdy = ragdoll.GetComponent<DeadBodyInfo>();
+            bdy.overrideSpawnPosition = true;
+            bdy.attachedLimb = bdy.bodyParts[attachedLimbTarget];
+
+            bdy.gameObject.name = "moaidummybody-" + dummyId;
+            if (RoundManager.Instance.IsHost)
+            {
+                dummyBodies.Add(bdy);
+            }
+        }
+
+        [ClientRpc]
+        public void destroyDummyClientRpc(int dummyId)
+        {
+
+            GameObject g = GameObject.Find("moaidummybody-" + dummyId);
+            DeadBodyInfo dmy = g.GetComponent<DeadBodyInfo>();
+            if (RoundManager.Instance.IsHost)
+            {
+                for (int i = 0; i < dummyBodies.Count; i++)
+                {
+                    if (dummyBodies[i].GetInstanceID() == dmy.GetInstanceID())
+                    {
+                        dummyBodies.RemoveAt(i);
+                    }
+                }
+            }
+            Destroy(dmy.gameObject);
+        }
+
+        [ClientRpc]
+        public void attachDummyClientRpc(int dummyId)
+        {
+            GameObject g = GameObject.Find("moaidummybody-" + dummyId);
+            DeadBodyInfo dmy = g.GetComponent<DeadBodyInfo>();
+            dmy.attachedTo = mouth.transform;
         }
 
         [ClientRpc]

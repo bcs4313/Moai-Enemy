@@ -243,7 +243,7 @@ namespace MoaiEnemy.src.MoaiNormal
                             }
                             else
                             {   // anger builds up faster the closer you are
-                                var logResult = (float)Math.Log(45 / Vector3.Distance(transform.position, targetPlayer.transform.position), 1.3); ;
+                                var logResult = (float)Math.Log(60 / Vector3.Distance(transform.position, targetPlayer.transform.position), 1.3); ;
                                 if (logResult > 2)
                                 {
                                     anger += logResult;
