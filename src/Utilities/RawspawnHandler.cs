@@ -67,8 +67,8 @@ namespace MoaiEnemy.src.Utilities
                 foreach (string entry in distribution_entries)
                 {
                     string[] values = entry.Split("%");
-                    chances.Add(float.Parse(values[0]) / 100f);
-                    multipliers.Add(float.Parse(values[1]) / 100f);
+                    chances.Add(Math.Min(100, float.Parse(values[0]) * Plugin.simpleSpawnMultiplier.Value) / 100f);
+                    multipliers.Add((float.Parse(values[1]) * Plugin.simpleSpawnMultiplier.Value) / 100f);
                 }
 
                 if (pickMax)

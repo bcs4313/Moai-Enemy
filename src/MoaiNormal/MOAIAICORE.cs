@@ -10,6 +10,7 @@ using UnityEngine.AI;
 using MoaiEnemy.src.Utilities;
 using LethalLib.Modules;
 using static UnityEngine.GraphicsBuffer;
+using System.Threading.Tasks;
 
 namespace MoaiEnemy.src.MoaiNormal
 {
@@ -25,7 +26,7 @@ namespace MoaiEnemy.src.MoaiNormal
         // very high values result in very generous acts
         // goodBoy goes down by 1 every AI tick (0.2 seconds).
         // more valuable scrap gives exponentially higher values
-        protected int goodBoy = -1;
+        public int goodBoy = -1;
         protected Vector3 guardTarget = Vector3.zero;
         protected float impatience = 0;
         protected float wait = 20;
@@ -33,6 +34,7 @@ namespace MoaiEnemy.src.MoaiNormal
         // related to entering and exiting entrances
         // updated once every 4-ish seconds
         protected EntranceTeleport nearestEntrance = null;
+        public Vector3 nearestEntranceNavPosition = Vector3.zero;
         protected PlayerControllerB mostRecentPlayer = null;
         protected int entranceDelay = 0;  // prevents constant rentry / exit
         protected float chanceToLocateEntrancePlayerBonus = 0;
@@ -40,7 +42,11 @@ namespace MoaiEnemy.src.MoaiNormal
 
         // updated once every 15 seconds
         protected GrabbableObject[] source;
+        public List<GrabbableObject> unreachableItems = new List<GrabbableObject>();
+        public List<EnemyAI> unreachableEnemies = new List<EnemyAI>();
+        public Vector3 itemNavmeshPosition = Vector3.zero;
         protected static List<DeadBodyInfo> dummyBodies = new List<DeadBodyInfo>();
+        protected static List<int> targetedBodies = new List<int>();
         protected static int bdyInc = 0;
         protected int sourcecycle = 75;
 
@@ -56,6 +62,7 @@ namespace MoaiEnemy.src.MoaiNormal
         public AudioSource slidingSnow;
         public AudioSource slidingMetal;
         public AudioSource slidingGravel;
+        public AudioSource creatureDig;
         public bool isSliding = false;
         public Transform mouth;
         protected bool eatingScrap = false;
@@ -64,7 +71,7 @@ namespace MoaiEnemy.src.MoaiNormal
 
         // stamina mechancis
         protected float stamina = 0; // moai use stamina to chase the player
-        bool recovering = false; // moai don't chase if they are recovering
+        protected bool recovering = false; // moai don't chase if they are recovering
         public int provokePoints = 0;
 
 #pragma warning disable 0649
@@ -88,17 +95,38 @@ namespace MoaiEnemy.src.MoaiNormal
             HeadingToEntrance,
         }
 
-        public void LogIfDebugBuild(string text)
+        public void LogDebug(string text)
         {
 #if DEBUG
             Plugin.Logger.LogInfo(text);
 #endif
         }
 
+        public void LogProduction(string text)
+        {
+            Plugin.Logger.LogInfo(text);
+        }
+
         public virtual void setPitches(float pitchAlter)
         {
             // do nothing
         }
+
+        public void destroyAllDummies()
+        {
+            for (int i = 0; i < dummyBodies.Count; i++)
+            {
+                destroyDummyClientRpc(getDummyId(dummyBodies[i]));
+            }
+            dummyBodies.Clear();
+        }
+
+        public override void OnDestroy()
+        {
+            destroyAllDummies();
+            base.OnDestroy();
+        }
+
 
         public void setHalo(bool active)
         {
@@ -113,10 +141,32 @@ namespace MoaiEnemy.src.MoaiNormal
             }
         }
 
+        public PlayerControllerB moaiGetNearestPlayer()
+        {
+            var players = RoundManager.Instance.playersManager.allPlayerScripts;
+
+            PlayerControllerB bestPlayer = null;
+            float bestDistance = 999999999f;
+            for (int i = 0; i < players.Length; i++)
+            {
+                var player = players[i];
+                if (player && !player.isPlayerDead && player.isPlayerControlled && Vector3.Distance(this.transform.position, player.transform.position) < bestDistance)
+                {
+                    bestDistance = Vector3.Distance(this.transform.position, player.transform.position);
+                    bestPlayer = player;
+                }
+            }
+
+            return bestPlayer;
+        }
+
         public void baseInit()
         {
-            mostRecentPlayer = this.GetClosestPlayer();
+            source = FindObjectsOfType<GrabbableObject>();
+            EntityWarp.mapEntrances = UnityEngine.Object.FindObjectsOfType<EntranceTeleport>(false);
+            mostRecentPlayer = moaiGetNearestPlayer();
             animator = this.gameObject.GetComponent<Animator>();
+            if (enemyRandom == null) { enemyRandom = new System.Random(); }
 
             base.Start();
             if (RoundManager.Instance.IsServer)
@@ -129,15 +179,15 @@ namespace MoaiEnemy.src.MoaiNormal
                 this.animator.enabled = false;
             }
 
-            if (UnityEngine.Random.Range(0.0f, 1.0f) < 0.15)
+            if (UnityEngine.Random.Range(0.0f, 1.0f) < Plugin.moaiAngelChance.Value)
             {
                 goodBoy = UnityEngine.Random.RandomRangeInt(0, 7000);
                 enemyHP += 4;
-                Plugin.networkHandler.s_moaiHalo.SendAllClients(new moaiHaloPkg(NetworkObject.NetworkObjectId, true));
+                moaiSetHaloClientRpc(true);
             }
             else
             {
-                Plugin.networkHandler.s_moaiHalo.SendAllClients(new moaiHaloPkg(NetworkObject.NetworkObjectId, false));
+                moaiSetHaloClientRpc(false);
             }
 
             // size variant modification
@@ -153,14 +203,19 @@ namespace MoaiEnemy.src.MoaiNormal
                     newSize = 1 + UnityEngine.Random.Range(0.0f, 5.0f);
                 }
 
+                if (newSize > Plugin.moaiSizeCap.Value)
+                {
+                    newSize = Plugin.moaiSizeCap.Value;
+                }
+
                 if (newSize < 1)
                 {
                     var p = (double)newSize;
-                    Plugin.networkHandler.s_moaiSizeSet.SendAllClients(new moaiSizePkg(NetworkObject.NetworkObjectId, newSize, (float)Math.Pow(p, 0.3)));
+                    setSizeClientRpc(newSize, (float)Math.Pow(p, 0.3));
                 }
                 else
                 {
-                    Plugin.networkHandler.s_moaiSizeSet.SendAllClients(new moaiSizePkg(NetworkObject.NetworkObjectId, newSize, newSize));
+                    setSizeClientRpc(newSize, newSize);
                 }
             }
 
@@ -192,15 +247,29 @@ namespace MoaiEnemy.src.MoaiNormal
             // We make the enemy start searching. This will make it start wandering around.
             StartSearch(transform.position);
 
-            Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "creatureBelch"));
-            Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "creatureVoice"));
+            moaiSoundPlayClientRpc("creatureBelch");
+            moaiSoundPlayClientRpc("creatureVoice");
         }
 
-        public void baseUpdate() {
+        public void baseUpdate()
+        {
+            // death check for traps
+            if (this.isEnemyDead && enemyHP > 0)
+            {
+                this.animator.speed = 1;
+                base.KillEnemyOnOwnerClient(false);
+                this.stopAllSound();
+                animator.SetInteger("state", 3);
+                isEnemyDead = true;
+                enemyHP = 0;
+                moaiSoundPlayClientRpc("creatureDeath");
+            }
+
             if (isEnemyDead)
             {
                 if (!isDeadAnimationDone)
                 {
+                    this.animator.speed = 1;
                     isDeadAnimationDone = true;
                     stopAllSound();
                     creatureVoice.PlayOneShot(dieSFX);
@@ -208,7 +277,7 @@ namespace MoaiEnemy.src.MoaiNormal
                 return;
             }
 
-            if(targetPlayer != null && targetPlayer.isPlayerDead) { targetPlayer = null; }
+            if (targetPlayer != null && targetPlayer.isPlayerDead) { targetPlayer = null; }
             movingTowardsTargetPlayer = targetPlayer != null;
 
             timeSinceHittingLocalPlayer += Time.deltaTime;
@@ -245,12 +314,14 @@ namespace MoaiEnemy.src.MoaiNormal
         public void baseAIInterval()
         {
             goodBoy -= 1;
-            if(provokePoints > 0)
+            if (provokePoints > 0)
             {
+                goodBoy = 0;
                 provokePoints--;
             }
+
             if (entranceDelay > 0) { entranceDelay--; }
-            slidingSoundTick();
+            slidingSoundTickClientRpc();
 
             // source update cycle
             if (sourcecycle > 0)
@@ -261,9 +332,11 @@ namespace MoaiEnemy.src.MoaiNormal
             {
                 source = FindObjectsOfType<GrabbableObject>();
                 sourcecycle = 75;
+                unreachableItems.Clear();
+                unreachableEnemies.Clear();
             }
 
-            if(stamina <= 0)
+            if (stamina <= 0)
             {
                 recovering = true;
             }
@@ -275,23 +348,25 @@ namespace MoaiEnemy.src.MoaiNormal
             // executes once every second
             if (sourcecycle % 5 == 0)
             {
-                nearestEntrance = EntityWarp.findNearestEntrance(this);
+                var ePack = EntityWarp.findNearestEntrance(this);
+                nearestEntrance = ePack.tele;
+                nearestEntranceNavPosition = ePack.navPosition;
 
-                if(stamina < 120)
+                if (stamina < 120)
                 {
                     stamina += 3;  // a moai regenerates all of its stamina in 30 seconds?
                 }
 
                 if (currentBehaviourStateIndex == (int)State.Guard || currentBehaviourStateIndex == (int)State.StickingInFrontOfEnemy)
                 {
-                    mostRecentPlayer = this.GetClosestPlayer();
+                    mostRecentPlayer = moaiGetNearestPlayer();
                 }
             }
 
             // bug fix
             if (transform.Find("Halo").gameObject.activeSelf && goodBoy <= 0)
             {
-                Plugin.networkHandler.s_moaiHalo.SendAllClients(new moaiHaloPkg(NetworkObject.NetworkObjectId, false));
+                moaiSetHaloClientRpc(false);
             }
 
             if (targetPlayer != null)
@@ -307,8 +382,8 @@ namespace MoaiEnemy.src.MoaiNormal
             // sound switch
             if (!creatureVoice.isPlaying)
             {
-                Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "creatureVoice"));
-                Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "creatureBelch"));
+                moaiSoundPlayClientRpc("creatureVoice");
+                moaiSoundPlayClientRpc("creatureBelch");
             }
 
             // good boy state switch
@@ -317,7 +392,8 @@ namespace MoaiEnemy.src.MoaiNormal
                 StopSearch(currentSearch);
                 guardTarget = Vector3.zero;
                 SwitchToBehaviourClientRpc((int)State.Guard);
-                Plugin.networkHandler.s_moaiHalo.SendAllClients(new moaiHaloPkg(NetworkObject.NetworkObjectId, true));
+                moaiSetHaloClientRpc(true);
+                return;
             }
 
             // entrance state switch
@@ -329,14 +405,16 @@ namespace MoaiEnemy.src.MoaiNormal
                 SwitchToBehaviourClientRpc((int)State.HeadingToEntrance);
             }
 
-            // object search and state switch;
-            if (getObj() || corpseAvailable()) { SwitchToBehaviourClientRpc((int)State.HeadSwingAttackInProgress); }
-
             if (FoundClosestPlayerInRange(28f, true) || provokePoints > 0)
             {
                 StopSearch(currentSearch);
                 SwitchToBehaviourClientRpc((int)State.StickingInFrontOfPlayer);
+                return;
             }
+
+            // object search and state switch;
+            if (getObj() && !unreachableItems.Contains(getObj())) { SwitchToBehaviourClientRpc((int)State.HeadSwingAttackInProgress); }
+            if (corpseAvailable()) { SwitchToBehaviourClientRpc((int)State.HeadSwingAttackInProgress); }
         }
 
         public void baseHeadingToEntrance()
@@ -344,7 +422,7 @@ namespace MoaiEnemy.src.MoaiNormal
             targetPlayer = null;
             //Debug.Log("Heading to Entrance...");
             //Debug.Log(Vector3.Distance(transform.position, nearestEntrance.transform.position));
-            SetDestinationToPosition(nearestEntrance.transform.position);
+            SetDestinationToPosition(nearestEntranceNavPosition);
             if (this.isOutside != nearestEntrance.isEntranceToBuilding || this.agent.pathStatus == NavMeshPathStatus.PathPartial)
             {
                 //Debug.Log("Entrance is not in navigation zone... Cancelling state");
@@ -362,7 +440,7 @@ namespace MoaiEnemy.src.MoaiNormal
                     SwitchToBehaviourClientRpc((int)State.Guard);
                 }
             }
-            if (Vector3.Distance(transform.position, nearestEntrance.transform.position) < (2.0 + gameObject.transform.localScale.x))
+            if (Vector3.Distance(transform.position, nearestEntranceNavPosition) < (2.0 + gameObject.transform.localScale.x))
             {
                 if (nearestEntrance.isEntranceToBuilding)
                 {
@@ -390,23 +468,24 @@ namespace MoaiEnemy.src.MoaiNormal
                     SwitchToBehaviourClientRpc((int)State.Guard);
                 }
             }
-        }
-
-        public void baseGuard()
-        {
-            targetPlayer = null;
-            agent.speed = 4f * moaiGlobalSpeed.Value;
 
             if (provokePoints > 0)
             {
-                goodBoy = 0;
+                StartSearch(transform.position);
+                SwitchToBehaviourClientRpc((int)State.SearchingForPlayer);
             }
+        }
+
+        public void baseGuard(bool goldMode = false)
+        {
+            targetPlayer = null;
+            agent.speed = 4f * moaiGlobalSpeed.Value;
 
             if (guardTarget == Vector3.zero)
             {
                 impatience = 0;
                 wait = 20;
-                guardTarget = pickGuardNode().transform.position;
+                guardTarget = pickGuardNode();
             }
 
             SetDestinationToPosition(guardTarget);
@@ -427,6 +506,12 @@ namespace MoaiEnemy.src.MoaiNormal
                 impatience += 0.1f;
             }
 
+            // invalid path cancellation
+            if (agent.pathStatus == NavMeshPathStatus.PathPartial || agent.pathStatus == NavMeshPathStatus.PathInvalid)
+            {
+                guardTarget = Vector3.zero;
+            }
+
             // prevents issues with struggling to reach a destination
             if (impatience == 10)
             {
@@ -434,7 +519,7 @@ namespace MoaiEnemy.src.MoaiNormal
             }
 
             // simply follow the player outside... with a delay
-            if (mostRecentPlayer && mostRecentPlayer.isInsideFactory == this.isOutside && entranceDelay <= 0)
+            if (mostRecentPlayer && mostRecentPlayer.isInsideFactory == this.isOutside && (goldMode || entranceDelay <= 0))
             {
                 Debug.Log("MOAI: entrance state switch");
                 StopSearch(currentSearch);
@@ -442,9 +527,9 @@ namespace MoaiEnemy.src.MoaiNormal
             }
 
             // sound switch
-            if (!creatureVoice.isPlaying)
+            if (!creatureVoice.isPlaying && !goldMode)
             {
-                Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "creatureVoice"));
+                moaiSoundPlayClientRpc("creatureVoice");
             }
 
             // good boy state switch
@@ -452,32 +537,38 @@ namespace MoaiEnemy.src.MoaiNormal
             {
                 StartSearch(transform.position);
                 SwitchToBehaviourClientRpc((int)State.SearchingForPlayer);
-                Plugin.networkHandler.s_moaiHalo.SendAllClients(new moaiHaloPkg(NetworkObject.NetworkObjectId, false));
+                moaiSetHaloClientRpc(false);
             }
 
             // object search and state switch;
-            if (ClosestEnemyInRange(28))
+            if (ClosestEnemyInRange(28) && !goldMode)
             {
                 SwitchToBehaviourClientRpc((int)State.StickingInFrontOfEnemy);
             }
         }
 
-        public void baseStickingInFrontOfEnemy()
+        public void baseStickingInFrontOfEnemy(float maxRange = 28f)
         {
             targetPlayer = null;
             agent.speed = 7f * moaiGlobalSpeed.Value;
-            var closestMonster = ClosestEnemyInRange(28);
+            var closestMonster = ClosestEnemyInRange(maxRange);
             this.stamina -= 1.5f;  // all stamina (150) is lost in 15 seconds?
 
             // sound switch 
             if (!creatureSFX.isPlaying)
             {
-                Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "creatureSFX"));
+                moaiSoundPlayClientRpc("creatureSFX");
+            }
+
+            // mark off enemy if unreachable
+            if (agent.pathStatus == NavMeshPathStatus.PathPartial || agent.pathStatus == NavMeshPathStatus.PathInvalid)
+            {
+                unreachableEnemies.Add(closestMonster);
             }
 
             if (goodBoy <= 0)
             {
-                Plugin.networkHandler.s_moaiHalo.SendAllClients(new moaiHaloPkg(NetworkObject.NetworkObjectId, false));
+                moaiSetHaloClientRpc(false);
                 StartSearch(transform.position);
                 SwitchToBehaviourClientRpc((int)State.SearchingForPlayer);
             }
@@ -487,6 +578,7 @@ namespace MoaiEnemy.src.MoaiNormal
                 StopSearch(currentSearch);
                 guardTarget = Vector3.zero;
                 SwitchToBehaviourClientRpc((int)State.Guard);
+                return;
             }
 
             // Charge into monster
@@ -494,7 +586,8 @@ namespace MoaiEnemy.src.MoaiNormal
             SetDestinationToPosition(StalkPos, checkForPath: false);
         }
 
-        public void baseStickingInFrontOfPlayer() {
+        public void baseStickingInFrontOfPlayer(float maxRange = 22f)
+        {
             agent.speed = 5.3f * moaiGlobalSpeed.Value;
             updateEntranceChance();
 
@@ -503,11 +596,8 @@ namespace MoaiEnemy.src.MoaiNormal
             // sound switch 
             if (!creatureSFX.isPlaying)
             {
-                Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "creatureSFX"));
+                moaiSoundPlayClientRpc("creatureSFX");
             }
-
-            // object search and state switch;
-            if (corpseAvailable()) { SwitchToBehaviourClientRpc((int)State.HeadSwingAttackInProgress); }
 
             // good boy state switch
             if (goodBoy > 0)
@@ -515,11 +605,11 @@ namespace MoaiEnemy.src.MoaiNormal
                 StopSearch(currentSearch);
                 guardTarget = Vector3.zero;
                 SwitchToBehaviourClientRpc((int)State.Guard);
-                Plugin.networkHandler.s_moaiHalo.SendAllClients(new moaiHaloPkg(NetworkObject.NetworkObjectId, true));
+                moaiSetHaloClientRpc(true);
             }
 
             // Keep targetting closest player, unless they are over 20 units away and we can't see them.
-            if (!FoundClosestPlayerInRange(22f, false) && !FoundClosestPlayerInRange(28f, true) && provokePoints <= 0)
+            if (!FoundClosestPlayerInRange(maxRange, false) && !FoundClosestPlayerInRange(maxRange + 6f, true) && provokePoints <= 0)
             {
                 targetPlayer = null;
                 StartSearch(transform.position);
@@ -529,7 +619,21 @@ namespace MoaiEnemy.src.MoaiNormal
             StickingInFrontOfPlayer();
         }
 
-        public void baseHeadSwingAttackInProgress()
+        // create a navmesh position that the moai must reach to consume/grab a corpse
+        // this way navigation is much less buggy
+        public Vector3 objNavPos(GrabbableObject objTarget)
+        {
+            if (!objTarget) { return Vector3.zero; }
+            else
+            {
+                NavMeshHit hit;
+                var result = NavMesh.SamplePosition(objTarget.transform.position, out hit, 5f, NavMesh.AllAreas);
+                if (result) { return hit.position; }
+                else { return Vector3.zero; }
+            }
+        }
+
+        public void baseHeadSwingAttackInProgress(bool transitionOverride = false)
         {
             // sound switch
             if (!eatingHuman && !eatingScrap)
@@ -537,7 +641,7 @@ namespace MoaiEnemy.src.MoaiNormal
                 if (!creatureFood.isPlaying)
                 {
                     //Debug.Log("MSOUND: creatureFood");
-                    Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "creatureFood"));
+                    moaiSoundPlayClientRpc("creatureFood");
                 }
             }
             else
@@ -545,12 +649,12 @@ namespace MoaiEnemy.src.MoaiNormal
                 if (!creatureEat.isPlaying && eatingScrap)
                 {
                     //Debug.Log("MSOUND: creatureEat");
-                    Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "creatureEat"));
+                    moaiSoundPlayClientRpc("creatureEat");
                 }
                 if (!creatureEatHuman.isPlaying && eatingHuman)
                 {
                     //Debug.Log("MSOUND: creatureEatHuman");
-                    Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "creatureEatHuman"));
+                    moaiSoundPlayClientRpc("creatureEatHuman");
                 }
                 if (eatingTimer > 0)
                 {
@@ -563,6 +667,21 @@ namespace MoaiEnemy.src.MoaiNormal
                     {
                         goodBoy = (int)Math.Pow(devouredObj.scrapValue * 1.5, 1.8);
                         enemyHP += (devouredObj.scrapValue / 10);
+
+                        // destroy locust ai if destroying a hive
+                        if (devouredObj.gameObject.name.ToLower().Contains("redlocust"))
+                        {
+                            var bees = GameObject.FindObjectsOfType<RedLocustBees>();
+                            foreach (RedLocustBees b in bees)
+                            {
+                                if (b.hive.NetworkObjectId == devouredObj.NetworkObjectId)
+                                {
+                                    b.OnNetworkDespawn();
+                                    Destroy(b.gameObject);
+                                }
+                            }
+                        }
+
                         devouredObj.OnNetworkDespawn();
                         Destroy(devouredObj.NetworkObject);
                         Destroy(devouredObj.propBody);
@@ -573,13 +692,24 @@ namespace MoaiEnemy.src.MoaiNormal
                     PlayerControllerB ply2 = getPlayerCorpse();
                     if (ply2)
                     {
-                        Plugin.networkHandler.s_moaiDestroyBody.SendAllClients(new moaiDestroyBodyPkg(NetworkObject.NetworkObjectId, ply2.NetworkObject.NetworkObjectId));
+                        // 50/50 chance for a real body to cause a conversion
+                        if (enemyRandom.NextDouble() < (0.5 * Plugin.soulRarity.Value))
+                        {
+                            respawnEvent();
+                        }
+                        destroyBodyClientRpc(ply2.NetworkObject.NetworkObjectId);
                     }
 
                     DeadBodyInfo dmy2 = getDummyCorpse();
                     if (dmy2)
                     {
+                        // there's a 10% chance for a dummy to cause a soul devourer conversion
+                        if (enemyRandom.NextDouble() < (0.1 * Plugin.soulRarity.Value))
+                        {
+                            respawnEvent();
+                        }
                         destroyDummyClientRpc(getDummyId(dmy2));
+                        moaiSoundPlayClientRpc("stopEatHuman");
                     }
                 }
             }
@@ -589,7 +719,19 @@ namespace MoaiEnemy.src.MoaiNormal
             PlayerControllerB ply = getPlayerCorpse();
             DeadBodyInfo dmy = getDummyCorpse();
 
-            if ((obj == null && ply == null && dmy == null) || goodBoy > 0)
+            // for those items / paths that cannot be reached
+            if (agent.pathStatus == NavMeshPathStatus.PathPartial || agent.pathStatus == NavMeshPathStatus.PathInvalid)
+            {
+                unreachableItems.Add(obj);
+                eatingHuman = false;
+                eatingScrap = false;
+                eatingTimer = -1;
+                StartSearch(transform.position);
+                SwitchToBehaviourClientRpc((int)State.SearchingForPlayer);
+                return;
+            }
+
+            if ((obj == null && ply == null && dmy == null) || (!transitionOverride && goodBoy > 0) || provokePoints > 0)
             {
                 //Debug.Log("MOAI: Lost Object. Ending obj search.");
                 eatingHuman = false;
@@ -612,9 +754,12 @@ namespace MoaiEnemy.src.MoaiNormal
                         if (!eatingHuman)
                         {
                             Debug.Log("MOAI: Attaching Body to Mouth");
-                            eatingTimer = 150;
-                            Plugin.networkHandler.s_moaiAttachBody.SendAllClients(new moaiAttachBodyPkg(NetworkObject.NetworkObjectId, ply.NetworkObject.NetworkObjectId));
-                            Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "creatureEatHuman"));
+                            if (eatingTimer <= 0)
+                            {
+                                eatingTimer = 150;
+                            }
+                            attachBodyClientRpc(ply.NetworkObject.NetworkObjectId);
+                            moaiSoundPlayClientRpc("creatureEatHuman");
                         }
                         eatingHuman = true;
                     }
@@ -627,15 +772,19 @@ namespace MoaiEnemy.src.MoaiNormal
                 {
                     targetPlayer = null;
                     targetNode = dmy.transform;
+                    agent.speed = Math.Min(8.0f * moaiGlobalSpeed.Value, agent.speed);
                     SetDestinationToPosition(dmy.transform.position);
                     if (Vector3.Distance(transform.position, dmy.transform.position) < dmy.transform.localScale.magnitude + transform.localScale.magnitude)
                     {
                         if (!eatingHuman)
                         {
                             Debug.Log("MOAI: Attaching Dummy to Mouth");
-                            eatingTimer = 150;
+                            if (eatingTimer <= 0)
+                            {
+                                eatingTimer = 150;
+                            }
                             attachDummyClientRpc(getDummyId(dmy));
-                            Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "creatureEatHuman"));
+                            moaiSoundPlayClientRpc("creatureEatHuman");
                         }
                         eatingHuman = true;
                     }
@@ -649,8 +798,9 @@ namespace MoaiEnemy.src.MoaiNormal
                     //Debug.Log("MOAI: Heading to found Scrap");
                     targetPlayer = null;
                     targetNode = obj.transform;
-                    SetDestinationToPosition(obj.transform.position);
-                    if (Vector3.Distance(transform.position, obj.transform.position) < obj.transform.localScale.magnitude + transform.localScale.magnitude)
+                    Vector3 navDestination = objNavPos(obj);
+                    SetDestinationToPosition(navDestination);
+                    if (Vector3.Distance(transform.position, navDestination) < obj.transform.localScale.magnitude + transform.localScale.magnitude)
                     {
                         if (obj.IsLocalPlayer)
                         {
@@ -658,15 +808,15 @@ namespace MoaiEnemy.src.MoaiNormal
                             {
                                 Debug.Log("MOAI: Attaching Body to Mouth");
                                 eatingTimer = 150;
-                                Plugin.networkHandler.s_moaiAttachBody.SendAllClients(new moaiAttachBodyPkg(NetworkObject.NetworkObjectId, ply.NetworkObject.NetworkObjectId));
-                                Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "creatureEatHuman"));
+                                attachBodyClientRpc(ply.NetworkObject.NetworkObjectId);
+                                moaiSoundPlayClientRpc("creatureEatHuman");
                             }
                             eatingHuman = true;
                         }
                         else if (!eatingScrap)
                         {
                             eatingTimer = (int)(obj.scrapValue / 1.8) + 15;
-                            Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "creatureEat"));
+                            moaiSoundPlayClientRpc("creatureEat");
                         }
                         eatingScrap = true;
                     }
@@ -725,6 +875,7 @@ namespace MoaiEnemy.src.MoaiNormal
         {
             try
             {
+                List<DeadBodyInfo> bodyList = new List<DeadBodyInfo>();
                 for (int i = 0; i < dummyBodies.Count; i++)
                 {
                     GameObject body = dummyBodies[i].gameObject;
@@ -737,8 +888,20 @@ namespace MoaiEnemy.src.MoaiNormal
                     if (d < 200.0f)
                     {
                         //Debug.Log("found player to eat");
-                        return dummyBodies[i];
+                        bodyList.Add(dummyBodies[i]);
                     }
+                }
+                if (bodyList.Count > 0)
+                {
+                    for (int i = 0; i < bodyList.Count; i++)
+                    {
+                        if (targetedBodies[i] == -1 || targetedBodies[i] == GetInstanceID())
+                        {
+                            targetedBodies[i] = GetInstanceID();
+                            return bodyList[i];
+                        }
+                    }
+                    return bodyList[enemyRandom.Next(0, bodyList.Count)];
                 }
             }
             catch (Exception e)
@@ -782,6 +945,10 @@ namespace MoaiEnemy.src.MoaiNormal
         // otherwise return a object
         public GrabbableObject getObj()
         {
+            // setting override for item consumption
+            if (Plugin.moaiConsumeScrap.Value == false && !this.gameObject.name.ToLower().Contains("gold")) { return null; }
+
+            List<GrabbableObject> itemList = new List<GrabbableObject>();
             try
             {
                 for (int i = 0; i < source.Length; i++)
@@ -789,11 +956,31 @@ namespace MoaiEnemy.src.MoaiNormal
                     GrabbableObject obj = source[i];
                     //LogIfDebugBuild(obj.name);
 
-                    if (Vector3.Distance(transform.position, obj.transform.position) < 20.0f && !obj.heldByPlayerOnServer && !obj.isInShipRoom)
+                    if (Vector3.Distance(transform.position, obj.transform.position) < 20.0f && !obj.heldByPlayerOnServer && !obj.isInShipRoom && !unreachableItems.Contains(obj))
                     {
                         //Debug.Log("MOAI: Returning object -> " + obj.name);
-                        return obj;
+                        if (!obj.name.ToLower().Contains("gold"))
+                        {
+                            itemList.Add(obj);
+                        }
                     }
+                }
+
+                if (itemList.Count > 0)
+                {
+                    // prioritize the item with the highest score, which is distance combined with value
+                    float highestItemScore = 0;
+                    GrabbableObject bestItem = itemList[0];
+                    for (int i = 0; i < itemList.Count; i++)
+                    {
+                        var score = (1 / Vector3.Distance(transform.position, itemList[i].transform.position)) * itemList[i].scrapValue;
+                        if (score > highestItemScore)
+                        {
+                            bestItem = itemList[i];
+                            highestItemScore = score;
+                        }
+                    }
+                    return bestItem;
                 }
             }
             catch (IndexOutOfRangeException)
@@ -808,8 +995,9 @@ namespace MoaiEnemy.src.MoaiNormal
             return null;   // no food :(
         }
 
-        public GameObject pickGuardNode()
+        public Vector3 pickGuardNode()
         {
+
             //Debug.Log("MOAIGUARD: Picking Guard Node");
             List<GameObject> allGoodNodes = new List<GameObject>();
 
@@ -823,28 +1011,42 @@ namespace MoaiEnemy.src.MoaiNormal
                     float dist = Vector3.Distance(g.transform.position, playerPos);
                     //Debug.Log("Dist: " + dist);
                     //Debug.Log("dist < " + (23 + this.transform.localScale.x));
-                    if (dist < (23 + this.transform.localScale.x) && !StartOfRound.Instance.allPlayerScripts[i].isPlayerDead)
+                    if (dist < (13 + this.transform.localScale.x) && !StartOfRound.Instance.allPlayerScripts[i].isPlayerDead)
                     {
                         allGoodNodes.Add(g);
                         //Debug.Log("appended to good node -> " + allGoodNodes.Count + " - " + allGoodNodes.ToString());
                     }
                 }
             }
+
+            GameObject nodeAnchor = null;  // we generate a location from the anchor
             if (allGoodNodes.Count > 0)
             {
                 //Debug.Log("MOAIGUARD: Returning Good Node");
-                return allGoodNodes[UnityEngine.Random.RandomRangeInt(0, allGoodNodes.Count)];
+                nodeAnchor = allGoodNodes[UnityEngine.Random.RandomRangeInt(0, allGoodNodes.Count)];
             }
             else
             {
                 //Debug.Log("MOAIGUARD: Returning Random Node");
-                return allAINodes[UnityEngine.Random.RandomRangeInt(0, allAINodes.Length)];
+                nodeAnchor = allAINodes[UnityEngine.Random.RandomRangeInt(0, allAINodes.Length)];
             }
+
+            // pick a random position from the anchor
+            Vector3 variation = new Vector3((float)(8 - enemyRandom.NextDouble() * 16), 0, (float)(8 - enemyRandom.NextDouble() * 16));
+            Vector3 newPos = nodeAnchor.transform.position + variation;
+            NavMeshHit hit;
+            var result = NavMesh.SamplePosition(newPos, out hit, 24f, NavMesh.AllAreas);
+
+            if (result)
+            {
+                return hit.position;
+            }
+            else { return allGoodNodes[UnityEngine.Random.RandomRangeInt(0, allGoodNodes.Count)].transform.position; }
         }
 
         public bool FoundClosestPlayerInRange(float r, bool needLineOfSight)
         {
-            if(recovering) { return false; }
+            if (recovering) { return false; }
             moaiTargetClosestPlayer(range: r, requireLineOfSight: needLineOfSight);
             if (targetPlayer == null) return false;
             return targetPlayer != null;
@@ -877,12 +1079,13 @@ namespace MoaiEnemy.src.MoaiNormal
             return targetPlayer != null;
         }
 
-        EnemyAI ClosestEnemyInRange(float range)
+        protected EnemyAI ClosestEnemyInRange(float range)
         {
-            if (!recovering)
+            if (recovering)
             {
                 return null;
             }
+
             var enemies = RoundManager.Instance.SpawnedEnemies;
             var closestDist = range;
             EnemyAI closestEnemy = null;
@@ -898,7 +1101,7 @@ namespace MoaiEnemy.src.MoaiNormal
                         if (!enemy.transform.Find("Halo").gameObject.activeSelf)
                         {
                             var dist = Vector3.Distance(transform.position, enemy.transform.position);
-                            if (dist < closestDist && enemy.enemyHP > 0 && !enemy.isEnemyDead && enemy.GetInstanceID() != GetInstanceID())
+                            if (dist < closestDist && enemy.enemyHP > 0 && !enemy.isEnemyDead && enemy.GetInstanceID() != GetInstanceID() && !unreachableEnemies.Contains(enemy))
                             {
                                 closestDist = dist;
                                 closestEnemy = enemy;
@@ -909,7 +1112,7 @@ namespace MoaiEnemy.src.MoaiNormal
                 else // target enemies in general
                 {
                     var dist = Vector3.Distance(transform.position, enemy.transform.position);
-                    if (dist < closestDist && enemy.enemyHP > 0 && !enemy.isEnemyDead)
+                    if (dist < closestDist && enemy.enemyHP > 0 && !enemy.isEnemyDead && !unreachableEnemies.Contains(enemy))
                     {
                         closestDist = dist;
                         closestEnemy = enemy;
@@ -942,6 +1145,7 @@ namespace MoaiEnemy.src.MoaiNormal
                 targetPlayer = playerWhoHit;
             }
             stamina = 60;
+            recovering = false;
             if (base.IsOwner)
             {
                 if (this.enemyHP <= 0)
@@ -950,10 +1154,11 @@ namespace MoaiEnemy.src.MoaiNormal
                     this.stopAllSound();
                     animator.SetInteger("state", 3);
                     isEnemyDead = true;
-                    Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "creatureDeath"));
+                    moaiSoundPlayClientRpc("creatureDeath");
                     return;
                 }
-                Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "creatureHit"));
+
+                moaiSoundPlayClientRpc("creatureHit");
             }
         }
 
@@ -1032,86 +1237,153 @@ namespace MoaiEnemy.src.MoaiNormal
             creatureEat.Stop();
             creatureEatHuman.Stop();
             creatureFood.Stop();
+            creatureDig.Stop();
         }
 
-        public AudioSource grabSource(string argname)
+        [ClientRpc]
+        public void moaiSoundPlayClientRpc(String soundName)
         {
-            var sources = GetComponentsInChildren<AudioSource>();
-            for (int i = 0; i < sources.Length; i++)
+            switch (soundName)
             {
-                AudioSource s = sources[i];
-                if (s.name.Equals(argname))
-                {
-                    return s;
-                }
+                case "creatureSFX":
+                    stopAllSound();
+                    creatureSFX.Play();
+                    break;
+                case "creatureVoice":
+                    stopAllSound();
+
+                    // start time intervals, for variance
+                    double[] timeIntervals = [0.0, 0.8244, 11.564, 29.11, 34.491, 37.840, 48.689, 64.518, 89.535, 92.111];
+                    int selectedTime = UnityEngine.Random.Range(0, timeIntervals.Length);
+
+                    //Debug.Log("selected time: " + timeIntervals[selectedTime]);
+                    creatureVoice.Play();  // time is in seconds
+                    creatureVoice.SetScheduledStartTime(timeIntervals[selectedTime]);
+                    creatureVoice.time = (float)timeIntervals[selectedTime];
+                    break;
+                case "creatureFood":
+                    creatureSFX.Stop();
+                    creatureVoice.Stop();
+                    creatureFood.Play();
+                    break;
+                case "creatureEat":
+                    creatureSFX.Stop();
+                    creatureVoice.Stop();
+                    creatureEat.Play();
+                    break;
+                case "creatureEatHuman":
+                    creatureSFX.Stop();
+                    creatureVoice.Stop();
+                    creatureEatHuman.Play();
+                    break;
+                case "stopEatHuman":
+                    creatureEatHuman.Stop();
+                    break;
+                case "creatureHit":
+                    creatureHit.Play();
+                    break;
+                case "creatureDeath":
+                    stopAllSound();
+                    creatureDeath.Play();
+                    break;
+                case "creatureBelch":
+                    creatureBelch.Play();
+                    break;
+                case "creatureBlitz":
+                    playSoundId("creatureBlitz");
+                    break;
+                case "creaturePrepare":
+                    playSoundId("creaturePrepare");
+                    break;
+                case "creatureKidnap":
+                    playSoundId("creatureKidnap");
+                    break;
             }
-            return null;
         }
 
-        public void slidingSoundTick()
+        [ClientRpc]
+        public void slidingSoundTickClientRpc()
         {
-            if(isEnemyDead || agent.velocity.magnitude < (agent.speed / 8))
+            if (isEnemyDead || agent.velocity.magnitude < (agent.speed / 8 + 1))
             {
                 if (isSliding)
                 {
+                    stopSlideSounds();
                     isSliding = false;
-                    Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "stopSliding"));
                 }
+                return;
             }
 
             var slideMaterial = getCurrentMaterialSittingOn();
-            switch(slideMaterial)
+            switch (slideMaterial)
             {
                 default:
                     if (!slidingBasic.isPlaying)
                     {
-                        Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "slidingBasic"));
+                        stopSlideSounds();
+                        isSliding = true;
+                        slidingBasic.Play();
                     }
                     break;
                 case "Gravel":
                     if (!slidingGravel.isPlaying)
                     {
-                        Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "slidingGravel"));
+                        stopSlideSounds();
+                        isSliding = true;
+                        slidingGravel.Play();
                     }
                     break;
                 case "CatWalk":
                     if (!slidingMetal.isPlaying)
                     {
-                        Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "slidingMetal"));
+                        stopSlideSounds();
+                        isSliding = true;
+                        slidingMetal.Play();
                     }
                     break;
                 case "Aluminum":
                     if (!slidingMetal.isPlaying)
                     {
-                        Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "slidingMetal"));
+                        stopSlideSounds();
+                        isSliding = true;
+                        slidingMetal.Play();
                     }
                     break;
                 case "Dirt":
                     if (!slidingGravel.isPlaying)
                     {
-                        Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "slidingGravel"));
+                        stopSlideSounds();
+                        isSliding = true;
+                        slidingGravel.Play();
                     }
                     break;
                 case "Snow":
                     if (!slidingSnow.isPlaying)
                     {
-                        Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "slidingSnow"));
+                        stopSlideSounds();
+                        isSliding = true;
+                        slidingSnow.Play();
                     }
                     break;
                 case "Carpet":
                     if (!slidingSnow.isPlaying)
                     {
-                        Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "slidingSnow"));
+                        stopSlideSounds();
+                        isSliding = true;
+                        slidingSnow.Play();
                     }
                     break;
                 case "Wood":
                     if (!slidingWood.isPlaying)
                     {
-                        Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "slidingWood"));
+                        stopSlideSounds();
+                        isSliding = true;
+                        slidingWood.Play();
                     }
                     break;
                 case "None":
-                    Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "stopSliding"));
+                    stopSlideSounds();
+                    isSliding = false;
                     break;
             }
         }
@@ -1145,7 +1417,7 @@ namespace MoaiEnemy.src.MoaiNormal
             return slidingSurface;
         }
 
-        public int getDummyId(DeadBodyInfo dmy)
+        public static int getDummyId(DeadBodyInfo dmy)
         {
             return int.Parse(dmy.name.Split("-")[1]);
         }
@@ -1163,6 +1435,7 @@ namespace MoaiEnemy.src.MoaiNormal
             if (RoundManager.Instance.IsHost)
             {
                 dummyBodies.Add(bdy);
+                targetedBodies.Add(-1);
             }
         }
 
@@ -1179,6 +1452,7 @@ namespace MoaiEnemy.src.MoaiNormal
                     if (dummyBodies[i].GetInstanceID() == dmy.GetInstanceID())
                     {
                         dummyBodies.RemoveAt(i);
+                        targetedBodies.RemoveAt(i);
                     }
                 }
             }
@@ -1193,6 +1467,63 @@ namespace MoaiEnemy.src.MoaiNormal
             dmy.attachedTo = mouth.transform;
         }
 
+
+        // a respawn event consists of
+        // a dig animation and sound
+        // replacing a moai with a soul devourer once the animation finishes
+        public async void respawnEvent()
+        {
+            if (!RoundManager.Instance.IsServer) { return; }
+
+            beginDiggingClientRpc();
+
+            int timeout = 20;
+            while (!animator.GetCurrentAnimatorStateInfo(0).IsName("Transformation"))
+            {
+                timeout--;
+                if (timeout <= 0) { return; }
+                await Task.Delay(100);
+            }
+
+            while (animator.GetCurrentAnimatorStateInfo(0).IsName("Transformation"))
+            {
+                await Task.Delay(500);
+            }
+
+            if (isEnemyDead && isDeadAnimationDone)
+            {
+                await Task.Delay(500);
+                replaceWithSoulDevourer();
+            }
+        }
+
+        // play the digging animation and sound for spawning the soul devourer
+        [ClientRpc]
+        public void beginDiggingClientRpc()
+        {
+            animator.Play("Transformation");
+            stopAllSound();
+            creatureDig.Play();
+
+            // make moai dead to prevent ai ticks and updates from other sources
+            enemyHP = 0;
+            isEnemyDead = true;
+            isDeadAnimationDone = true;
+        }
+
+        // delete self and spawn in a Soul Devourer
+        public void replaceWithSoulDevourer()
+        {
+            if (!RoundManager.Instance.IsServer) { return; }
+
+            GameObject go = UnityEngine.Object.Instantiate<GameObject>(SoulDevourer.enemyPrefab, transform.position, transform.rotation);
+            go.GetComponent<NetworkObject>().Spawn(true);
+            Debug.Log("MOAI: Spawned Soul Devourer at: " + transform.ToString());
+            RoundManager.Instance.SpawnedEnemies.Add(go.GetComponent<EnemyAI>());
+
+            Destroy(this.gameObject);
+        }
+
         [ClientRpc]
         // note that this is only for rotation animations (cause its moai)
         // these are synced through a network transform
@@ -1203,6 +1534,103 @@ namespace MoaiEnemy.src.MoaiNormal
             {
                 if (this.animator) { this.animator.SetInteger("state", index); }
             }
+        }
+
+        [ClientRpc]
+        public void moaiSetHaloClientRpc(bool value)
+        {
+            setHalo(value);
+        }
+
+        [ClientRpc]
+        public void destroyBodyClientRpc(ulong playernetid)
+        {
+            for (int i = 0; i < RoundManager.Instance.playersManager.allPlayerScripts.Length; i++)
+            {
+                PlayerControllerB player = RoundManager.Instance.playersManager.allPlayerScripts[i];
+
+                if (player != null && player.name != null && player.transform != null)
+                {
+                    if (player.NetworkObject.NetworkObjectId == playernetid)
+                    {
+                        Debug.Log("MOAI: Successfully destroyed body with id = " + playernetid);
+                        player.deadBody.DeactivateBody(false);
+                    }
+                }
+            }
+        }
+
+        [ClientRpc]
+        public void attachBodyClientRpc(ulong playerid)
+        {
+            for (int i = 0; i < RoundManager.Instance.playersManager.allPlayerScripts.Length; i++)
+            {
+                PlayerControllerB player = RoundManager.Instance.playersManager.allPlayerScripts[i];
+
+                if (player != null && player.name != null && player.transform != null)
+                {
+                    if (player.NetworkObject.NetworkObjectId == playerid)
+                    {
+                        player.deadBody.attachedLimb = player.deadBody.bodyParts[5];
+
+                        if (mouth)
+                        {
+                            Debug.Log("MOAI: Successfully attached body to mouth with id = " + playerid);
+                            player.deadBody.attachedTo = mouth.transform;
+                        }
+                        else
+                        {
+                            Debug.Log("MOAI: Successfully attached body to eye with id = " + playerid);
+                            player.deadBody.attachedTo = eye.transform;
+                        }
+                        player.deadBody.canBeGrabbedBackByPlayers = true;
+                    }
+                }
+            }
+        }
+
+        [ClientRpc]
+        public void setSizeClientRpc(float size, float pitchAlter)
+        {
+            gameObject.transform.localScale *= (size * Plugin.moaiGlobalSize.Value);
+            gameObject.GetComponent<NavMeshAgent>().height *= size;
+
+            creatureSFX.pitch /= pitchAlter;
+            creatureVoice.pitch /= pitchAlter;
+            creatureFood.pitch /= pitchAlter;
+            creatureEat.pitch /= pitchAlter;
+            creatureEatHuman.pitch /= pitchAlter;
+            creatureHit.pitch /= pitchAlter;
+            creatureDeath.pitch /= pitchAlter;
+            creatureBelch.pitch /= pitchAlter;
+            setPitches(pitchAlter);
+        }
+
+        [ClientRpc]
+        public void enableStrikerClientRpc(bool pkg)
+        {
+            Debug.Log("MOAI: Enabling LightningStriker Obj.");
+
+            GameObject weather = GameObject.Find("TimeAndWeather");
+
+            if (weather == null)
+            {
+                Debug.LogError("MOAI: Not enabling LightningStriker Obj for Blue Moai: TimeAndWeather not found!");
+            }
+
+            // find "Stormy" in weather
+            GameObject striker = null;
+            for (int i = 0; i < weather.transform.GetChildCount(); i++)
+            {
+                GameObject g = weather.transform.GetChild(i).gameObject;
+                if (g.name.Equals("Stormy"))
+                {
+                    //Debug.Log("Lethal Chaos: Found Stormy!");
+                    striker = g;
+                }
+            }
+            striker.SetActive(true);
+            Debug.Log("MOAI: striker successfully enabled.");
         }
     }
 }

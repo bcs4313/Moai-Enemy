@@ -165,10 +165,12 @@ namespace MoaiEnemy.src.MoaiNormal
         {
             var items = player.ItemSlots;
 
+            /*
             if(player.carryWeight >= 1.38)
             {
                 return false;
             }
+            */
 
             for(int i = 0; i < items.Length; i++)
             {
@@ -179,6 +181,11 @@ namespace MoaiEnemy.src.MoaiNormal
                 }
             }
             return true;
+        }
+
+        public void angerMoai()
+        {
+            anger = 100;
         }
 
         public override void DoAIInterval()
@@ -217,8 +224,6 @@ namespace MoaiEnemy.src.MoaiNormal
             switch (currentBehaviourStateIndex)
             {
                 case (int)State.SearchingForPlayer:
-                    Debug.Log("SearchingForPlayer");
-
                     // in this case, the player has entered the factory with the red moai
                     if (playerHeld)
                     {
@@ -264,7 +269,7 @@ namespace MoaiEnemy.src.MoaiNormal
                             StopSearch(currentSearch);
                             SwitchToBehaviourClientRpc((int)State.Kidnapping);
                             anger = 0;
-                            Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "creatureKidnap"));
+                            moaiSoundPlayClientRpc("creatureKidnap");
                             return;
                         }
 
@@ -370,7 +375,7 @@ namespace MoaiEnemy.src.MoaiNormal
                     // Transition to Blitz if sound is no longer playing
                     if (creaturePrepare.time > 3.7)
                     {
-                        LogIfDebugBuild("MOAIRED: Blitz Activated");
+                        LogDebug("MOAIRED: Blitz Activated");
                         preparing = false;
                         playerTargetSteps = 0;
                         impatience = 0;
@@ -382,7 +387,7 @@ namespace MoaiEnemy.src.MoaiNormal
                     // sound switch 
                     if (!preparing)
                     {
-                        Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "creaturePrepare"));
+                        moaiSoundPlayClientRpc("creaturePrepare");
                         preparing = true;
                     }
                     break;
@@ -421,7 +426,7 @@ namespace MoaiEnemy.src.MoaiNormal
                         }
 
                         blitzTarget = hit.position;
-                        Plugin.networkHandler.s_moaiSoundPlay.SendAllClients(new moaiSoundPkg(NetworkObject.NetworkObjectId, "creatureBlitz"));
+                        moaiSoundPlayClientRpc("creatureBlitz");
                         spawnExplosionClientRpc();
                         startPosFromTarget = this.transform.position;
 
@@ -453,7 +458,7 @@ namespace MoaiEnemy.src.MoaiNormal
                     break;
 
                 default:
-                    LogIfDebugBuild("This Behavior State doesn't exist!");
+                    LogDebug("This Behavior State doesn't exist!");
                     break;
             }
         }

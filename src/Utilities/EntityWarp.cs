@@ -1,28 +1,47 @@
 ﻿using UnityEngine;
+using UnityEngine.AI;
 
 namespace MoaiEnemy.src.Utilities
 {
-    // Credit to xCeezyx for SendEnemyInside/Outside code! makes my life so much easier.
-    // https://github.com/xCeezyx/LethalEscape/tree/main?tab=readme-ov-file
     internal class EntityWarp
     {
-        // Find nearest entrance
-        public static EntranceTeleport findNearestEntrance(EnemyAI __instance)
+        // updates on map load
+        public static EntranceTeleport[] mapEntrances;
+
+        public struct entrancePack
         {
-            float bestDistance = 99999999;
+            public EntranceTeleport tele;
+            public Vector3 navPosition;
+        }
+
+        // Find nearest entrance
+        public static entrancePack findNearestEntrance(EnemyAI __instance)
+        {
+            float bestDistance = 99999999f;
             EntranceTeleport bestTele = null;
-            //--- FIND MAIN ENTERANCE ---
-            EntranceTeleport[] array = Object.FindObjectsOfType<EntranceTeleport>(false);
+            EntranceTeleport[] array = mapEntrances;
             for (int j = 0; j < array.Length; j++)
             {
-                if (Vector3.Distance(__instance.transform.position, array[j].transform.position) < bestDistance)
+                if (__instance.isOutside == array[j].isEntranceToBuilding && Vector3.Distance(__instance.transform.position, array[j].transform.position) < bestDistance)
                 {
                     bestDistance = Vector3.Distance(__instance.transform.position, array[j].transform.position);
                     bestTele = array[j];
                 }
             }
 
-            return bestTele;
+            var pack = new entrancePack();
+
+            // get a navigation position for the entrance
+            if (bestTele != null)
+            {
+                NavMeshHit hit;
+                var result = NavMesh.SamplePosition(bestTele.transform.position, out hit, 10f, NavMesh.AllAreas);
+                if(result) { pack.navPosition = hit.position;  }
+
+            }
+            pack.tele = bestTele;
+
+            return pack;
         }
 
         // Send AI Outside/Inside Code
@@ -32,58 +51,35 @@ namespace MoaiEnemy.src.Utilities
             __instance.isOutside = false;
             __instance.allAINodes = GameObject.FindGameObjectsWithTag("AINode");
 
-
             //--- FIND BEST ENTRANCE ---
-            EntranceTeleport[] array = Object.FindObjectsOfType<EntranceTeleport>(false);
-            bool foundBest = false;
-            for (int j = 0; j < array.Length; j++)
+            EntranceTeleport doorEntered = findNearestEntrance(__instance).tele;
+
+            if(!doorEntered)
             {
-                if (array[j].entranceId == 0 && !array[j].isEntranceToBuilding && !foundBest)
-                {
-                    __instance.serverPosition = array[j].entrancePoint.position;
-                    break;
-                }
-                var exitPoint = findExitPoint(array[j]);
-                if (exitPoint != null)
-                {
-                    __instance.serverPosition = array[j].entrancePoint.position;
-                    foundBest = true;
-                }
+                Debug.LogError("MOAI EntranceTeleport: Failed to find entrance teleport.");
             }
-            if (!foundBest)
+
+            var entrancePosition = doorEntered.entrancePoint;
+
+            if(!entrancePosition)
             {
-                Debug.Log("MOAI: Failed to find best exit position. Using default Entrance Teleport");
+                Debug.LogError("MOAI EntranceTeleport: Failed to find best exit position.");
+            }
+
+            NavMeshHit hit;
+            var result = NavMesh.SamplePosition(entrancePosition.transform.position, out hit, 10f, NavMesh.AllAreas);
+            if (result)
+            {
+                __instance.serverPosition = hit.position;
+                __instance.transform.position = hit.position;
+                __instance.agent.Warp(__instance.serverPosition);
+                __instance.SyncPositionToClients();
             }
             else
             {
-                Debug.Log("MOAI: Teleporting to best possible exit.");
+                Debug.LogError("MOAI EntranceTeleport: Failed to find exit NavmeshHit position");
+
             }
-
-            Transform ClosestNodePos = __instance.ChooseClosestNodeToPosition(__instance.serverPosition, false, 0);
-
-            if (Vector3.Magnitude(ClosestNodePos.position - __instance.serverPosition) > 10)
-            {
-                __instance.serverPosition = ClosestNodePos.position;
-                __instance.transform.position = __instance.serverPosition;
-            }
-
-            __instance.transform.position = __instance.serverPosition;
-
-            __instance.agent.Warp(__instance.serverPosition);
-            __instance.SyncPositionToClients();
-        }
-
-        public static Transform findExitPoint(EntranceTeleport referenceDoor)
-        {
-            EntranceTeleport[] array = Object.FindObjectsOfType<EntranceTeleport>();
-            for (int i = 0; i < array.Length; i++)
-            {
-                if (array[i].isEntranceToBuilding != referenceDoor.isEntranceToBuilding && array[i].entranceId == referenceDoor.entranceId)
-                {
-                    return array[i].entrancePoint;
-                }
-            }
-            return null;
         }
 
         public static void SendEnemyOutside(EnemyAI __instance, bool SpawnOnDoor = true)
@@ -91,44 +87,34 @@ namespace MoaiEnemy.src.Utilities
             __instance.isOutside = true;
             __instance.allAINodes = GameObject.FindGameObjectsWithTag("OutsideAINode");
 
-            //--- FIND ENTERANCE DOOR CLOSEST TO PLAYERS
-            EntranceTeleport[] array = Object.FindObjectsOfType<EntranceTeleport>(false);
-            float ClosestexitDistance = 999;
-            for (int j = 0; j < array.Length; j++)
-            {
-                if (array[j].isEntranceToBuilding)
-                {
-                    for (int i = 0; i < StartOfRound.Instance.connectedPlayersAmount + 1; i++)
-                    {
-                        if (!StartOfRound.Instance.allPlayerScripts[i].isInsideFactory & Vector3.Magnitude(StartOfRound.Instance.allPlayerScripts[i].transform.position - array[j].entrancePoint.position) < ClosestexitDistance)
-                        {
-                            ClosestexitDistance = Vector3.Magnitude(StartOfRound.Instance.allPlayerScripts[i].transform.position - array[j].entrancePoint.position);
-                            __instance.serverPosition = array[j].entrancePoint.position;
-                        }
-                    }
+            //--- FIND BEST ENTRANCE ---
+            EntranceTeleport doorEntered = findNearestEntrance(__instance).tele;
 
-                }
+            if (!doorEntered)
+            {
+                Debug.LogError("MOAI EntranceTeleport: Failed to find entrance teleport.");
             }
 
-            if (__instance.OwnerClientId != GameNetworkManager.Instance.localPlayerController.actualClientId)
+            var entrancePosition = doorEntered.entrancePoint;
+
+            if (!entrancePosition)
             {
-                __instance.ChangeOwnershipOfEnemy(GameNetworkManager.Instance.localPlayerController.actualClientId);
+                Debug.LogError("MOAI EntranceTeleport: Failed to find best exit position.");
             }
 
-            Transform ClosestNodePos = __instance.ChooseClosestNodeToPosition(__instance.serverPosition, false, 0);
-
-            if (Vector3.Magnitude(ClosestNodePos.position - __instance.serverPosition) > 10 || SpawnOnDoor == false)
+            NavMeshHit hit;
+            var result = NavMesh.SamplePosition(entrancePosition.transform.position, out hit, 10f, NavMesh.AllAreas);
+            if (result)
             {
-                __instance.serverPosition = ClosestNodePos.position;
+                __instance.serverPosition = hit.position;
+                __instance.transform.position = hit.position;
+                __instance.agent.Warp(__instance.serverPosition);
+                __instance.SyncPositionToClients();
             }
-            __instance.transform.position = __instance.serverPosition;
-
-            __instance.agent.Warp(__instance.serverPosition);
-            __instance.SyncPositionToClients();
-
-            if (GameNetworkManager.Instance.localPlayerController != null)
+            else
             {
-                __instance.EnableEnemyMesh(!StartOfRound.Instance.hangarDoorsClosed || !GameNetworkManager.Instance.localPlayerController.isInHangarShipRoom, false);
+                Debug.LogError("MOAI EntranceTeleport: Failed to find exit NavmeshHit position");
+
             }
         }
     }
