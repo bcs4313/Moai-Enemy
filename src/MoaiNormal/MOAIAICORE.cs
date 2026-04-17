@@ -1114,17 +1114,18 @@ namespace MoaiEnemy.src.MoaiNormal
                     var dist = Vector3.Distance(transform.position, enemy.transform.position);
                     if (dist < closestDist && enemy.enemyHP > 0 && !enemy.isEnemyDead && !unreachableEnemies.Contains(enemy))
                     {
-                        closestDist = dist;
-                        closestEnemy = enemy;
+                        // friend guard
+                        if (!enemyIsFriend(enemy))
+                        {
+                            closestDist = dist;
+                            closestEnemy = enemy;
+                        }
                     }
                 }
             }
             if (closestEnemy != null && !closestEnemy.isEnemyDead && closestEnemy.enemyHP > 0 && closestEnemy.enemyType.canDie && closestEnemy.gameObject.activeSelf)
             {
-                if (!closestEnemy.gameObject.name.ToLower().Contains("locust"))  // dumb locusts
-                {
-                    return closestEnemy;
-                }
+                return closestEnemy;
             }
             return null;
         }
@@ -1189,6 +1190,10 @@ namespace MoaiEnemy.src.MoaiNormal
                 }
             }
             this.timeSinceHittingLocalPlayer = 0f;
+
+            // can't hit enemies that are configured to be friends
+            if(enemyIsFriend(collidedEnemy)) { return;  }
+
             collidedEnemy.HitEnemy(1, null, true);
         }
 
@@ -1631,6 +1636,48 @@ namespace MoaiEnemy.src.MoaiNormal
             }
             striker.SetActive(true);
             Debug.Log("MOAI: striker successfully enabled.");
+        }
+
+        public bool enemyIsFriend(EnemyAI EAI)
+        {
+            try
+            {
+                string list = Plugin.moaiTargetBlacklist.Value;
+                if(list.Length == 0 || list.Equals("")) { return false; }
+
+                string[] list_entries = list.Split(",");
+                foreach (string entry in list_entries)
+                {
+                    var entry_stripped = entry.ToLower().Trim();
+
+                    if (EAI && EAI.gameObject)
+                    {
+                        ScanNodeProperties scanProp1 = EAI.GetComponentInChildren<ScanNodeProperties>();
+                        ScanNodeProperties scanProp2 = EAI.GetComponent<ScanNodeProperties>();
+
+                        if (scanProp1)
+                        {
+                            if (scanProp1.headerText.ToLower().Trim().Contains(entry_stripped))
+                            {
+                                return true;
+                            }
+                        }
+                        else if (scanProp2)
+                        {
+                            if (scanProp2.headerText.ToLower().Trim().Contains(entry_stripped))
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                return false;
+            }
+            catch (Exception e) 
+            { 
+                Debug.LogError(e); 
+            }
+            return false;
         }
     }
 }
