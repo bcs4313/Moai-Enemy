@@ -1640,6 +1640,9 @@ namespace MoaiEnemy.src.MoaiNormal
 
         public bool enemyIsFriend(EnemyAI EAI)
         {
+            // don't target enemies that literally can't die
+            if(EAI && EAI.enemyType && !EAI.enemyType.canDie) { return true;  }
+
             try
             {
                 string list = Plugin.moaiTargetBlacklist.Value;

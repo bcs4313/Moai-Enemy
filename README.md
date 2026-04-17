@@ -420,4 +420,12 @@ Golden Moai Item:
 - V73 Compatibility update
 - Large boost to spawnrates (moai are generally just too rare according to feedback)
 - For people who want to keep moai's rare, change the simple spawn multiplier in the config to 0.67
+
+2.6.4
+- V80 Compatibility update
+- Remain on 2.6.3 if you are not on the latest version of lethal.
+
+2.6.5
+- Angel moais no longer attack conventionally peaceful / invincible enemies (all vanilla, some modded).
+- Added a blacklist in lethalconfig for you to add enemies angel moai shouldn't attack.
 </details>
