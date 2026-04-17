@@ -271,7 +271,7 @@ namespace MoaiEnemy
             goldRarity = Config.Bind("Variants", "Gold Moai Spawnrate", 1f, "Changes the spawnrate of the variant.");
             orangeRarity = Config.Bind("Variants", "Orange Moai Spawnrate", 1f, "Changes the spawnrate of the variant.");
             soulRarity = Config.Bind("Variants", "Devourer Spawnrate", 0.4f, "Changes the spawnrate of this... thing. Note that devourers don't spawn naturally, they have a chance to spawn when any moai consumes a corpse.");
-            moaiTargetBlacklist = Config.Bind("Advanced", "Enemy targeting blacklist", "mask hornets, roaming locusts, jester, hygrodere, butler, barber, ghost girl, circuit bees, living trap, pikmin, cutiefly", "A blacklist for enemies that angel moai will not target or damage. Put in the name of the enemy you see when you scan them in game. Not case sensitive. Comma separated list.");
+            moaiTargetBlacklist = Config.Bind("Advanced", "Enemy targeting blacklist", "mask hornets, roaming locusts, jester, hygrodere, butler, barber, ghost girl, circuit bees, giant sapsucker, old bird, living trap, pikmin, cutiefly", "A blacklist for enemies that angel moai will not target or damage. Put in the name of the enemy you see when you scan them in game. Not case sensitive. Comma separated list.");
 
             var angelSlider = new FloatSliderConfigItem(moaiAngelChance, new FloatSliderOptions
             {
