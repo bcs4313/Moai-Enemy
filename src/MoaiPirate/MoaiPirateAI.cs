@@ -16,6 +16,8 @@ namespace MoaiEnemy.src.MoaiNormal
     // MoaiEnemyAI Inherits from MOAIAICORE, which controls all of its basic functions.
     // The red variant will also inherit MOAIAICORE to keep default behavior, and then 'inject' its own behaviors in AI Interval.
 
+    // pirate AI writeup
+
     class MoaiPirateAI : MOAIAICORE
     {
         public String currentCommand = "Untamed";
@@ -55,10 +57,6 @@ namespace MoaiEnemy.src.MoaiNormal
                     break;
 
                 case (int)State.StickingInFrontOfPlayer:
-                    if (!isEnemyDead && enemyHP > 0)
-                    {
-                        thunderTick();
-                    }
                     break;
             };
         }
@@ -115,63 +113,6 @@ namespace MoaiEnemy.src.MoaiNormal
                 default:
                     LogDebug("This Behavior State doesn't exist!");
                     break;
-            }
-        }
-
-        public void thunderReset()
-        {
-            RoundManager m = RoundManager.Instance;
-
-            if (!gameObject.name.Contains("Blue") || isEnemyDead)
-            {
-                return;
-            }
-
-            if (targetPlayer == null || ticksTillThunder > 0)
-            {
-                return;
-            }
-
-            ticksTillThunder = 10 + Math.Min((float)Math.Pow(Vector3.Distance(transform.position, targetPlayer.transform.position), 1.75), 180);
-            if (ticksTillThunder < 35) { ticksTillThunder = 35; }
-            Vector3 position = serverPosition;
-            position.y += (float)(enemyRandom.NextDouble() * ticksTillThunder * 0.2 + 4 * this.gameObject.transform.localScale.x) * Math.Sign(enemyRandom.Next(-100, 100));
-            position.x += (float)(enemyRandom.NextDouble() * ticksTillThunder * 0.2 + 4 * this.gameObject.transform.localScale.x) * Math.Sign(enemyRandom.Next(-100, 100));
-
-            GameObject weather = GameObject.Find("TimeAndWeather");
-
-            GameObject striker = null;
-            for (int i = 0; i < weather.transform.GetChildCount(); i++)
-            {
-                GameObject g = weather.transform.GetChild(i).gameObject;
-                if (g.name.Equals("Stormy"))
-                {
-                    striker = g;
-                }
-            }
-            if (striker != null)
-            {
-                if (!striker.activeSelf)
-                {
-                    enableStrikerClientRpc(true);
-                }
-                m.LightningStrikeServerRpc(position);
-            }
-            else
-            {
-                Debug.LogError("Lethal Chaos: Failed to find Stormy Weather container (LBolt)!");
-            }
-        }
-
-        public void thunderTick()
-        {
-            if (currentBehaviourStateIndex == (int)State.StickingInFrontOfPlayer)
-            {
-                ticksTillThunder -= 1;
-                if (ticksTillThunder <= 0)
-                {
-                    thunderReset();
-                }
             }
         }
 
