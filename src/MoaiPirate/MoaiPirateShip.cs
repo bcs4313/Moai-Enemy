@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Text;
 using Unity.Netcode;
+using UnityEngine;
 using UnityEngine.AI;
 
 namespace MoaiEnemy.src.MoaiPirate
@@ -20,30 +21,86 @@ namespace MoaiEnemy.src.MoaiPirate
     internal class MoaiPirateShip : NetworkBehaviour
     {
         public NavMeshAgent agent;
+        public String phase = "landed";
 
+        // put ship audio sources here:
+
+        public float yLevel = 0f; // manually controlled Y level, nav agent does not control this.
+        public float targetYLevel = 0f;  // ship eases to this y level over time
         public void Update()
         {
+            switch(phase)
+            {
+                case "landed":
+                    agent.enabled = false;
+                    break;
+                case "rising":
+                    agent.enabled = false;
+                    break;
+                case "lowering":
+                    agent.enabled = false;
+                    break;
+                case "traveling":
+                    agent.enabled = true;
+                    break;
+            }
 
+            // Easing of yLevel
+            yLevel = Mathf.Lerp(yLevel, targetYLevel, 0.1f);
+
+            // agent based navigation
+            if (agent.enabled)
+            {
+                agent.updatePosition = false;
+                Vector3 nextPos = agent.nextPosition;
+                nextPos.y = yLevel;
+                transform.position = nextPos;
+            }
+            else
+            {
+                transform.position = new Vector3(transform.position.x, yLevel, transform.position.z);
+            }
         }
         
         public void InitPhaseLanded()
         {
-
+            phase = "landed";
         }
 
         public void InitPhaseRising()
         {
-
+            phase = "rising";
+            targetYLevel = transform.position.y + UnityEngine.Random.Range(30f, 80f);
         }
 
         public void InitPhaseLowering()
         {
+            phase = "lowering";
+            RoundManager m = RoundManager.Instance;
+            Physics.Raycast(transform.position, Vector2.down, out RaycastHit hitInfo, LayerMask.GetMask("Default", "Room", "Terrain", "Colliders"));
+            targetYLevel = hitInfo.point.y;
 
         }
 
-        public void InitPhaseTraveling()
+        // picks out a random destination from a list of outside AI nodes
+        public GameObject FindDestination()
         {
+            RoundManager m = RoundManager.Instance;
+            GameObject[] outNodes = m.outsideAINodes;
+            var selectedNode = outNodes[UnityEngine.Random.Range(0, outNodes.Length)];
+            return selectedNode;
+        }
 
+        // nav mesh agent will control the travel on the x and z axis, y is ignored
+        // if destination is Vector3.zero, the ship picks a random spot
+        public void InitPhaseTraveling(Vector3 destination)
+        {
+            phase = "traveling";
+            if(destination == Vector3.zero)
+            {
+                destination = FindDestination().transform.position;
+            }
+            agent.SetDestination(destination);
         }
     }
 }
