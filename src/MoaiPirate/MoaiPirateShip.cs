@@ -40,7 +40,7 @@ namespace MoaiEnemy.src.MoaiPirate
 
         public float yLevel = 0f; // manually controlled Y level, nav agent does not control this.
         public float targetYLevel = 0f;  // ship eases to this y level over time
-        public static float yEaseRate = 0.1f;  // easing rate for rising and lowering the ship
+        public static float yEaseRate = 0.75f;  // easing rate for rising and lowering the ship
         public void Update()
         {
             if(captain == null) { return; }
@@ -137,9 +137,16 @@ namespace MoaiEnemy.src.MoaiPirate
             agent.SetDestination(destination);
         }
 
-        public void SetCaptain(MoaiPirateAI pirate)
+        [ClientRpc]
+        public void SetCaptainClientRpc(ulong uid)
         {
-            captain = pirate;
+            foreach(MoaiPirateAI ai in FindObjectsOfType<MoaiPirateAI>())
+            {
+                if(ai.NetworkObjectId == uid)
+                {
+                    captain = ai;
+                }
+            }
         }
     }
 }
