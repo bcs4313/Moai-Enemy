@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using MoaiEnemy;
 using LethalLib.Modules;
+using MoaiEnemy.src.MoaiPirate;
 
 namespace MoaiEnemy.src.MoaiNormal
 {
@@ -26,6 +27,14 @@ namespace MoaiEnemy.src.MoaiNormal
         public override void Start()
         {
             baseInit();
+
+            if (RoundManager.Instance.IsHost)
+            {
+                NavMesh.SamplePosition(transform.position, out NavMeshHit hit, 20f, NavMesh.AllAreas);
+                GameObject GO = Instantiate(Plugin.PirateShip, hit.position, transform.rotation);
+                GO.GetComponent<NetworkObject>().Spawn();
+                GO.GetComponent<MoaiPirateShip>().SetCaptain(this);
+            }
         }
 
         public override void Update()

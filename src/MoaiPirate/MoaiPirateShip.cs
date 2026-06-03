@@ -25,6 +25,7 @@ namespace MoaiEnemy.src.MoaiPirate
         public String phase = "landed";
 
         private MoaiPirateAI captain = null;
+        public GameObject shipModel; // where the ship is actually located. The navigation source (navagent), still lives on the navmesh while the ship is elevated.
 
         // moai attachment points
         // moai can oscillate between these points
@@ -39,6 +40,7 @@ namespace MoaiEnemy.src.MoaiPirate
 
         public float yLevel = 0f; // manually controlled Y level, nav agent does not control this.
         public float targetYLevel = 0f;  // ship eases to this y level over time
+        public static float yEaseRate = 0.1f;  // easing rate for rising and lowering the ship
         public void Update()
         {
             if(captain == null) { return; }
@@ -47,11 +49,8 @@ namespace MoaiEnemy.src.MoaiPirate
             switch(phase)
             {
                 case "landed":
-                    if(agent.enabled) { agent.enabled = false; }
                     break;
                 case "rising":
-                    if (agent.enabled) { agent.enabled = false; }
-
                     // completion condition: reach target Y level
                     if (Math.Abs(yLevel - targetYLevel) < 1)
                     {
@@ -59,8 +58,6 @@ namespace MoaiEnemy.src.MoaiPirate
                     }
                     break;
                 case "lowering":
-                    if (agent.enabled) { agent.enabled = false; }
-
                     // completion condition: reach target Y level
                     if (Math.Abs(yLevel - targetYLevel) < 1)
                     {
@@ -68,8 +65,6 @@ namespace MoaiEnemy.src.MoaiPirate
                     }
                     break;
                 case "traveling":
-                    if (!agent.enabled) { agent.enabled = true; }
-
                     // completion condition: reach dest
                     Vector3 adjustedPos = new Vector3(transform.position.x, 0, transform.position.z);
                     Vector3 adjustedDest = new Vector3(agent.destination.x, 0, agent.destination.z);
@@ -81,21 +76,10 @@ namespace MoaiEnemy.src.MoaiPirate
             }
 
             // Easing of yLevel
-            yLevel = Mathf.Lerp(yLevel, targetYLevel, 0.1f);
+            yLevel = Mathf.Lerp(yLevel, targetYLevel, yEaseRate * Time.deltaTime);
 
-            // agent based navigation
-            if (agent.enabled)
-            {
-                agent.updatePosition = false;
-                Vector3 nextPos = agent.nextPosition;
-                nextPos.y = yLevel;
-                transform.position = nextPos;
-
-            }
-            else
-            {
-                transform.position = new Vector3(transform.position.x, yLevel, transform.position.z);
-            }
+            // ship offset
+            shipModel.transform.position = new Vector3(transform.position.x, yLevel, transform.position.z); ;
         }
         
         public void InitPhaseLanded()
@@ -103,10 +87,15 @@ namespace MoaiEnemy.src.MoaiPirate
             phase = "landed";
         }
 
+
+        public static float lowestHeight = 5f;
+        public static float highestHeight = 25f;
         public void InitPhaseRising()
         {
             phase = "rising";
-            targetYLevel = transform.position.y + UnityEngine.Random.Range(30f, 80f);
+
+            targetYLevel = transform.position.y + UnityEngine.Random.Range(lowestHeight, highestHeight);
+            Debug.Log("Moai Pirate Ship: rising to height of: " + targetYLevel);
         }
 
         public void InitPhaseLowering()

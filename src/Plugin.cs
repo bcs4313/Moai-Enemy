@@ -60,6 +60,12 @@ namespace MoaiEnemy
         public static TerminalNode MoaiOrangeTerminalNode;
         public static TerminalKeyword MoaiOrangeTerminalKeyword;
 
+        // pirate ship and new pirate ship moai
+        public static EnemyType MoaiPirate;
+        public static TerminalNode MoaiPirateTerminalNode;
+        public static TerminalKeyword MoaiPirateTerminalKeyword;
+        public static GameObject PirateShip;
+
         public static EnemyType SoulDevourer;
         public static TerminalNode SoulDevourerTerminalNode;
         public static TerminalKeyword SoulDevourerTerminalKeyword;
@@ -130,6 +136,11 @@ namespace MoaiEnemy
             MoaiOrangeTerminalNode = Assets.MainAssetBundle.LoadAsset<TerminalNode>("MoaiOrangeTN");
             MoaiOrangeTerminalKeyword = Assets.MainAssetBundle.LoadAsset<TerminalKeyword>("MoaiOrangeTK");
 
+            MoaiPirate = Assets.MainAssetBundle.LoadAsset<EnemyType>("MoaiPirate");
+            MoaiPirateTerminalNode = Assets.MainAssetBundle.LoadAsset<TerminalNode>("MoaiPirateTN");
+            MoaiPirateTerminalKeyword = Assets.MainAssetBundle.LoadAsset<TerminalKeyword>("MoaiPirateTK");
+            PirateShip = Assets.MainAssetBundle.LoadAsset<GameObject>("MoaiEnemyShip");
+
             SoulDevourer = Assets.MainAssetBundle.LoadAsset<EnemyType>("SoulDev");
             SoulDevourerTerminalNode = Assets.MainAssetBundle.LoadAsset<TerminalNode>("SoulDevTN");
             SoulDevourerTerminalKeyword = Assets.MainAssetBundle.LoadAsset<TerminalKeyword>("SoulDevTK");
@@ -153,10 +164,12 @@ namespace MoaiEnemy
             NetworkPrefabs.RegisterNetworkPrefab(MoaiGold.enemyPrefab);
             NetworkPrefabs.RegisterNetworkPrefab(MoaiPurple.enemyPrefab);
             NetworkPrefabs.RegisterNetworkPrefab(MoaiOrange.enemyPrefab);
+            NetworkPrefabs.RegisterNetworkPrefab(MoaiPirate.enemyPrefab);
             NetworkPrefabs.RegisterNetworkPrefab(SoulDevourer.enemyPrefab);
             NetworkPrefabs.RegisterNetworkPrefab(plasmaProjectile);
             NetworkPrefabs.RegisterNetworkPrefab(consumptionCircle);
             NetworkPrefabs.RegisterNetworkPrefab(PlasmaPad);
+            NetworkPrefabs.RegisterNetworkPrefab(PirateShip);
 
             // rarity range is 0-100 normally
             rawSpawnMultiplier = RawspawnHandler.getSpawnMultiplier();
@@ -167,6 +180,7 @@ namespace MoaiEnemy
             RegisterEnemy(MoaiGold, (int)(0), LevelTypes.All, SpawnType.Daytime, MoaiGreenTerminalNode, MoaiGreenTerminalKeyword);
             RegisterEnemy(MoaiPurple, (int)(0), LevelTypes.All, SpawnType.Daytime, MoaiGreenTerminalNode, MoaiGreenTerminalKeyword);
             RegisterEnemy(MoaiOrange, (int)(0), LevelTypes.All, SpawnType.Daytime, MoaiOrangeTerminalNode, MoaiOrangeTerminalKeyword);
+            RegisterEnemy(MoaiPirate, (int)(0), LevelTypes.All, SpawnType.Daytime, MoaiPirateTerminalNode, MoaiPirateTerminalKeyword);
             RegisterEnemy(SoulDevourer, (int)(0), LevelTypes.All, SpawnType.Outside, MoaiGreenTerminalNode, MoaiGreenTerminalKeyword);
 
             Debug.Log("MOAI: Registering Moai Net Messages");
