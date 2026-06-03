@@ -1,4 +1,5 @@
-﻿using System;
+﻿using MoaiEnemy.src.MoaiNormal;
+using System;
 using System.Collections.Generic;
 using System.Text;
 using Unity.Netcode;
@@ -23,25 +24,59 @@ namespace MoaiEnemy.src.MoaiPirate
         public NavMeshAgent agent;
         public String phase = "landed";
 
+        private MoaiPirateAI captain = null;
+
+        // moai attachment points
+        // moai can oscillate between these points
+        // as he is "looking for treasure"
+        public Transform MainDeck;
+        public Transform CrowsNest;
+        public Transform PoopDeck;
+        public Transform Bow;
+        public Transform WheelPoint;  // the moai must be here in the traveling phase
+
         // put ship audio sources here:
 
         public float yLevel = 0f; // manually controlled Y level, nav agent does not control this.
         public float targetYLevel = 0f;  // ship eases to this y level over time
         public void Update()
         {
+            if(captain == null) { return; }
+            if(!RoundManager.Instance.IsHost) { return; }  // host only logic
+
             switch(phase)
             {
                 case "landed":
-                    agent.enabled = false;
+                    if(agent.enabled) { agent.enabled = false; }
                     break;
                 case "rising":
-                    agent.enabled = false;
+                    if (agent.enabled) { agent.enabled = false; }
+
+                    // completion condition: reach target Y level
+                    if (Math.Abs(yLevel - targetYLevel) < 1)
+                    {
+                        InitPhaseTraveling(Vector3.zero);
+                    }
                     break;
                 case "lowering":
-                    agent.enabled = false;
+                    if (agent.enabled) { agent.enabled = false; }
+
+                    // completion condition: reach target Y level
+                    if (Math.Abs(yLevel - targetYLevel) < 1)
+                    {
+                        InitPhaseLanded();
+                    }
                     break;
                 case "traveling":
-                    agent.enabled = true;
+                    if (!agent.enabled) { agent.enabled = true; }
+
+                    // completion condition: reach dest
+                    Vector3 adjustedPos = new Vector3(transform.position.x, 0, transform.position.z);
+                    Vector3 adjustedDest = new Vector3(agent.destination.x, 0, agent.destination.z);
+                    if (Vector3.Distance(adjustedPos, adjustedDest) < 3)
+                    {
+                        InitPhaseLowering();
+                    }
                     break;
             }
 
@@ -55,6 +90,7 @@ namespace MoaiEnemy.src.MoaiPirate
                 Vector3 nextPos = agent.nextPosition;
                 nextPos.y = yLevel;
                 transform.position = nextPos;
+
             }
             else
             {
@@ -77,8 +113,17 @@ namespace MoaiEnemy.src.MoaiPirate
         {
             phase = "lowering";
             RoundManager m = RoundManager.Instance;
-            Physics.Raycast(transform.position, Vector2.down, out RaycastHit hitInfo, LayerMask.GetMask("Default", "Room", "Terrain", "Colliders"));
-            targetYLevel = hitInfo.point.y;
+            Physics.Raycast(transform.position, Vector3.down, out RaycastHit hitInfo, 500f, LayerMask.GetMask("Default", "Room", "Terrain", "Colliders"));
+
+            if (hitInfo.collider != null)
+            {
+                targetYLevel = hitInfo.point.y;
+            }
+            else
+            {
+                Debug.Log("Moai Pirate Ship: Failed to find a raycast point to land on. Navigating elsewhere...");
+                InitPhaseTraveling(Vector3.zero);
+            }
 
         }
 
@@ -101,6 +146,11 @@ namespace MoaiEnemy.src.MoaiPirate
                 destination = FindDestination().transform.position;
             }
             agent.SetDestination(destination);
+        }
+
+        public void SetCaptain(MoaiPirateAI pirate)
+        {
+            captain = pirate;
         }
     }
 }
