@@ -5,6 +5,7 @@ using System.Text;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.AI;
+using GameNetcodeStuff;
 
 namespace MoaiEnemy.src.MoaiPirate
 {
@@ -18,6 +19,7 @@ namespace MoaiEnemy.src.MoaiPirate
     // 2 - traveling, the ship is using the NavMeshAgent to find a destination, ignoring elevation of the dest
     // 3 - lowering, the ship is lowering to the ground, eventually landing.
     // in the lowering phase, the ship will attempt to "fit" its own hitbox to the destination, via random sampling
+    // 4 - aggressive, the ship is pursuing a high-value target
 
     internal class MoaiPirateShip : NetworkBehaviour
     {
@@ -28,47 +30,65 @@ namespace MoaiEnemy.src.MoaiPirate
         public GameObject shipModel; // where the ship is actually located. The navigation source (navagent), still lives on the navmesh while the ship is elevated.
 
         // moai attachment points
-        // moai can oscillate between these points
-        // as he is "looking for treasure"
         public Transform MainDeck;
         public Transform CrowsNest;
         public Transform PoopDeck;
         public Transform Bow;
         public Transform WheelPoint;  // the moai must be here in the traveling phase
 
-        // put ship audio sources here:
-
-        public float yLevel = 0f; // manually controlled Y level, nav agent does not control this.
-        public float targetYLevel = 0f;  // ship eases to this y level over time
-        public static float yEaseRate = 0.75f;  // easing rate for rising and lowering the ship
+        public float yLevel = 0f;
+        public float targetYLevel = 0f;
+        public static float yEaseRate = 0.75f;
 
         public static float baseLandChance = 0.25f;
-        public static float landChance = 0.25f;  // accumulates land chance by 10% each time he doesn't land
+        public static float landChance = 0.25f;
+
+        // ── Aggressive state ──────────────────────────────────────────────
+        public enum AggressiveAction { Cannon, Grapple, Lower }
+
+        // The current scored target (one of these will be non-null)
+        public PlayerControllerB aggroPlayer = null;
+        public EnemyAI aggroEnemy = null;
+        public GrabbableObject aggroScrap = null;
+        public AggressiveAction aggroAction;
+
+        private float rescoreTimer = 0f;
+        private const float RESCORE_INTERVAL = 3f;
+        private const float ARRIVAL_DIST = 6f;       // XZ distance to consider "arrived" at target
+        private const float AGGRO_SIGHT_DIST = 40f;  // distance to keep tracking target before giving up
+        private const float MIN_ENEMY_SCORE = 20f;
+
+        // stubs fire state
+        private bool actionExecuted = false;
+
+        void Start()
+        {
+            yLevel = transform.position.y;
+            targetYLevel = transform.position.y;
+        }
+
         public void Update()
         {
-            if(captain == null) { return; }
-            if(!RoundManager.Instance.IsHost) { return; }  // host only logic
+            if (captain == null) { return; }
+            if (!RoundManager.Instance.IsHost) { return; }
 
-            switch(phase)
+            switch (phase)
             {
                 case "landed":
                     break;
                 case "rising":
-                    // completion condition: reach target Y level
                     if (Math.Abs(yLevel - targetYLevel) < 1)
                     {
                         InitPhaseTraveling(Vector3.zero);
                     }
                     break;
                 case "lowering":
-                    // completion condition: reach target Y level
                     if (Math.Abs(yLevel - targetYLevel) < 1)
                     {
                         InitPhaseLanded();
                     }
                     break;
                 case "traveling":
-                    // completion condition: reach dest
                     Vector3 adjustedPos = new Vector3(transform.position.x, 0, transform.position.z);
                     Vector3 adjustedDest = new Vector3(agent.destination.x, 0, agent.destination.z);
                     if (Vector3.Distance(adjustedPos, adjustedDest) < 3)
@@ -86,28 +106,283 @@ namespace MoaiEnemy.src.MoaiPirate
                     }
                     break;
                 case "aggressive":
+                    UpdateAggressive();
                     break;
             }
 
-            // Easing of yLevel
+            // Ease yLevel
             yLevel = Mathf.Lerp(yLevel, targetYLevel, yEaseRate * Time.deltaTime);
 
-            // ship offset
-            shipModel.transform.position = new Vector3(transform.position.x, yLevel, transform.position.z); ;
+            // Apply to ship model
+            shipModel.transform.position = new Vector3(transform.position.x, yLevel, transform.position.z);
         }
-        
+
+        // ─────────────────────────────────────────────────────────────────
+        //  AGGRESSIVE UPDATE  (called every frame while phase == "aggressive")
+        // ─────────────────────────────────────────────────────────────────
+        private void UpdateAggressive()
+        {
+            // Re-score on timer
+            rescoreTimer -= Time.deltaTime;
+            if (rescoreTimer <= 0f)
+            {
+                rescoreTimer = RESCORE_INTERVAL;
+                ScoreAndPickTarget();
+            }
+
+            // No target — give up, go back to patrolling
+            if (!HasValidTarget())
+            {
+                Debug.Log("Moai Pirate Ship: Lost target, resuming patrol.");
+                ExitAggressive();
+                return;
+            }
+
+            // Navigate toward target
+            Vector3 targetPos = GetTargetPosition();
+            agent.SetDestination(targetPos);
+
+            // Check XZ arrival
+            Vector3 shipXZ = new Vector3(transform.position.x, 0, transform.position.z);
+            Vector3 targetXZ = new Vector3(targetPos.x, 0, targetPos.z);
+            bool arrived = Vector3.Distance(shipXZ, targetXZ) < ARRIVAL_DIST;
+
+            if (arrived && !actionExecuted)
+            {
+                ExecuteAggroAction();
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        //  SCORING
+        // ─────────────────────────────────────────────────────────────────
+        private void ScoreAndPickTarget()
+        {
+            float bestScore = float.MinValue;
+            PlayerControllerB bestPlayer = null;
+            EnemyAI bestEnemy = null;
+            GrabbableObject bestScrap = null;
+            AggressiveAction bestAction = AggressiveAction.Cannon;
+
+            // ── Players ───────────────────────────────────────────────────
+            foreach (PlayerControllerB player in FindObjectsOfType<PlayerControllerB>())
+            {
+                if (player == null || player.isPlayerDead || !player.isPlayerControlled) continue;
+
+                float dist = Vector3.Distance(transform.position, player.transform.position);
+                if (dist > AGGRO_SIGHT_DIST) continue;
+
+                int heldValue = 0;
+                if (player.ItemSlots != null)
+                {
+                    foreach (GrabbableObject item in player.ItemSlots)
+                    {
+                        if (item != null && item.itemProperties.isScrap)
+                            heldValue += item.scrapValue;
+                    }
+                }
+
+                float score = 32f - dist + heldValue;
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestPlayer = player;
+                    bestEnemy = null;
+                    bestScrap = null;
+                    // 50/50: cannon or lower
+                    bestAction = UnityEngine.Random.value < 0.5f ? AggressiveAction.Cannon : AggressiveAction.Lower;
+                }
+            }
+
+            // ── Enemies ───────────────────────────────────────────────────
+            foreach (EnemyAI enemy in FindObjectsOfType<EnemyAI>())
+            {
+                if (enemy == null || enemy.isEnemyDead) continue;
+                if (enemy is MOAIAICORE) continue;  // ignore own kind
+                if (enemy.enemyHP <= 0) continue;   // invincible / already dead
+
+                float dist = Vector3.Distance(transform.position, enemy.transform.position);
+                if (dist > AGGRO_SIGHT_DIST) continue;
+
+                float score = (9f * enemy.enemyHP) - dist;
+                if (score < MIN_ENEMY_SCORE) continue;
+
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestPlayer = null;
+                    bestEnemy = enemy;
+                    bestScrap = null;
+                    // 33% each: cannon, grapple, lower
+                    float roll = UnityEngine.Random.value;
+                    bestAction = roll < 0.333f ? AggressiveAction.Cannon
+                               : roll < 0.666f ? AggressiveAction.Grapple
+                               : AggressiveAction.Lower;
+                }
+            }
+
+            // ── Scrap ─────────────────────────────────────────────────────
+            foreach (GrabbableObject item in FindObjectsOfType<GrabbableObject>())
+            {
+                if (item == null || !item.itemProperties.isScrap) continue;
+                if (item.isHeld || item.isHeldByEnemy) continue;  // skip held items
+
+                float dist = Vector3.Distance(transform.position, item.transform.position);
+                if (dist > AGGRO_SIGHT_DIST) continue;
+
+                float score = item.scrapValue - dist;
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestPlayer = null;
+                    bestEnemy = null;
+                    bestScrap = item;
+                    bestAction = AggressiveAction.Grapple;  // scrap always grappled
+                }
+            }
+
+            // Apply result
+            aggroPlayer = bestPlayer;
+            aggroEnemy = bestEnemy;
+            aggroScrap = bestScrap;
+            aggroAction = bestAction;
+            actionExecuted = false;  // new target, reset action flag
+
+            if (aggroPlayer != null)
+                Debug.Log($"Moai Pirate Ship: Targeting player {aggroPlayer.playerUsername}, action={aggroAction}, score={bestScore}");
+            else if (aggroEnemy != null)
+                Debug.Log($"Moai Pirate Ship: Targeting enemy {aggroEnemy.enemyType.enemyName}, action={aggroAction}, score={bestScore}");
+            else if (aggroScrap != null)
+                Debug.Log($"Moai Pirate Ship: Targeting scrap {aggroScrap.itemProperties.itemName}, score={bestScore}");
+            else
+                Debug.Log("Moai Pirate Ship: No valid target found during rescore.");
+        }
+
+        private bool HasValidTarget()
+        {
+            if (aggroPlayer != null)
+            {
+                if (aggroPlayer.isPlayerDead || !aggroPlayer.isPlayerControlled) return false;
+                float dist = Vector3.Distance(transform.position, aggroPlayer.transform.position);
+                return dist <= AGGRO_SIGHT_DIST;
+            }
+            if (aggroEnemy != null)
+            {
+                if (aggroEnemy.isEnemyDead || aggroEnemy == null) return false;
+                float dist = Vector3.Distance(transform.position, aggroEnemy.transform.position);
+                return dist <= AGGRO_SIGHT_DIST;
+            }
+            if (aggroScrap != null)
+            {
+                if (aggroScrap == null) return false;
+                float dist = Vector3.Distance(transform.position, aggroScrap.transform.position);
+                return dist <= AGGRO_SIGHT_DIST;
+            }
+            return false;
+        }
+
+        private Vector3 GetTargetPosition()
+        {
+            if (aggroPlayer != null) return aggroPlayer.transform.position;
+            if (aggroEnemy != null) return aggroEnemy.transform.position;
+            if (aggroScrap != null) return aggroScrap.transform.position;
+            return transform.position;
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        //  ACTION EXECUTION  (stubs)
+        // ─────────────────────────────────────────────────────────────────
+        private void ExecuteAggroAction()
+        {
+            actionExecuted = true;
+
+            switch (aggroAction)
+            {
+                case AggressiveAction.Cannon:
+                    FireCannon();
+                    break;
+                case AggressiveAction.Grapple:
+                    FireGrapple();
+                    break;
+                case AggressiveAction.Lower:
+                    InitPhaseLowering();
+                    // MoaiPirateAI handles the rest once landed
+                    break;
+            }
+
+            // Cannon and grapple return to patrolling immediately after firing
+            // Lower will transition via the landed phase detection in MoaiPirateAI
+            if (aggroAction != AggressiveAction.Lower)
+            {
+                ExitAggressive();
+            }
+        }
+
+        // STUB — replace with real projectile later
+        private void FireCannon()
+        {
+            Vector3 targetPos = GetTargetPosition();
+            Debug.Log($"Moai Pirate Ship: [STUB] Firing cannon at {targetPos}");
+
+            // TODO: Instantiate cannon ball projectile from Bow transform, aimed at targetPos
+            // For now, deal direct damage if target is a player
+            if (aggroPlayer != null)
+            {
+                aggroPlayer.DamagePlayer(30, true, true, CauseOfDeath.Blast);
+                Debug.Log("Moai Pirate Ship: [STUB] Cannon hit player for 30 damage.");
+            }
+            else if (aggroEnemy != null)
+            {
+                aggroEnemy.HitEnemy(2, null, true);
+                Debug.Log("Moai Pirate Ship: [STUB] Cannon hit enemy for 2 hits.");
+            }
+        }
+
+        // STUB — replace with real grapple animation/projectile later
+        private void FireGrapple()
+        {
+            Debug.Log("Moai Pirate Ship: [STUB] Firing grappling hook.");
+
+            // TODO: Animate grapple hook from ship toward target, then poof
+            if (aggroEnemy != null)
+            {
+                Debug.Log($"Moai Pirate Ship: [STUB] Grappling enemy {aggroEnemy.enemyType.enemyName} — poofing.");
+                aggroEnemy.gameObject.SetActive(false);
+                Destroy(aggroEnemy.gameObject, 0.1f);
+                aggroEnemy = null;
+            }
+            else if (aggroScrap != null)
+            {
+                Debug.Log($"Moai Pirate Ship: [STUB] Grappling scrap {aggroScrap.itemProperties.itemName} — poofing.");
+                aggroScrap.gameObject.SetActive(false);
+                Destroy(aggroScrap.gameObject, 0.1f);
+                aggroScrap = null;
+            }
+        }
+
+        private void ExitAggressive()
+        {
+            aggroPlayer = null;
+            aggroEnemy = null;
+            aggroScrap = null;
+            actionExecuted = false;
+            rescoreTimer = 0f;
+            InitPhaseTraveling(Vector3.zero);
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        //  PHASE INITS
+        // ─────────────────────────────────────────────────────────────────
         public void InitPhaseLanded()
         {
             phase = "landed";
         }
-
 
         public static float lowestHeight = 5f;
         public static float highestHeight = 25f;
         public void InitPhaseRising()
         {
             phase = "rising";
-
             targetYLevel = transform.position.y + UnityEngine.Random.Range(lowestHeight, highestHeight);
             Debug.Log("Moai Pirate Ship: rising to height of: " + targetYLevel);
         }
@@ -115,8 +390,8 @@ namespace MoaiEnemy.src.MoaiPirate
         public void InitPhaseLowering()
         {
             phase = "lowering";
-            RoundManager m = RoundManager.Instance;
-            Physics.Raycast(transform.position, Vector3.down, out RaycastHit hitInfo, 500f, LayerMask.GetMask("Default", "Room", "Terrain", "Colliders"));
+            Physics.Raycast(shipModel.transform.position, Vector3.down, out RaycastHit hitInfo, 500f,
+                LayerMask.GetMask("Default", "Room", "Terrain", "Colliders"));
 
             if (hitInfo.collider != null)
             {
@@ -127,48 +402,42 @@ namespace MoaiEnemy.src.MoaiPirate
                 Debug.Log("Moai Pirate Ship: Failed to find a raycast point to land on. Navigating elsewhere...");
                 InitPhaseTraveling(Vector3.zero);
             }
-
         }
 
-        // picks out a random destination from a list of outside AI nodes
         public GameObject FindDestination()
         {
             RoundManager m = RoundManager.Instance;
             GameObject[] outNodes = m.outsideAINodes;
-            var selectedNode = outNodes[UnityEngine.Random.Range(0, outNodes.Length)];
-            return selectedNode;
+            return outNodes[UnityEngine.Random.Range(0, outNodes.Length)];
         }
 
-        // nav mesh agent will control the travel on the x and z axis, y is ignored
-        // if destination is Vector3.zero, the ship picks a random spot
         public void InitPhaseTraveling(Vector3 destination)
         {
             phase = "traveling";
-            if(destination == Vector3.zero)
+            agent.enabled = true;
+            if (destination == Vector3.zero)
             {
                 destination = FindDestination().transform.position;
             }
             agent.SetDestination(destination);
         }
 
-        // Aggression Init phase works in a particular way...
-        // it oscillates on a timer, picking game objects to fight or plunder by priority
-        // Priority levels:
-        // Player: 32 - Distance from Pirate Ship + held scrap value
-        // Enemy: (9*enemyHP) - Distance (feels threatened by big tanky things, ignores invincible enemies), ignores MOAIAICORE enemies
-        // Lone Scrap: scrap value - distance
-        // bare minimum threat score to feel threatened = 20
         public void InitPhaseAggressive()
         {
             phase = "aggressive";
+            rescoreTimer = 0f;   // score immediately on first update
+            actionExecuted = false;
+            aggroPlayer = null;
+            aggroEnemy = null;
+            aggroScrap = null;
         }
 
         [ClientRpc]
         public void SetCaptainClientRpc(ulong uid)
         {
-            foreach(MoaiPirateAI ai in FindObjectsOfType<MoaiPirateAI>())
+            foreach (MoaiPirateAI ai in FindObjectsOfType<MoaiPirateAI>())
             {
-                if(ai.NetworkObjectId == uid)
+                if (ai.NetworkObjectId == uid)
                 {
                     captain = ai;
                 }
