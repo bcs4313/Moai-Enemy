@@ -138,6 +138,7 @@ namespace MoaiEnemy.src.MoaiNormal
                         SwitchToBehaviourClientRpc((int)State.HeadingToShip);
                         targetPlayer = null;
                         SetDestinationToPosition(GetWheelDestination());
+                        StopSearch(currentSearch);
                         return;
                     }
                     timeLeftPatrollingOffShip -= 0.2f;
@@ -168,6 +169,14 @@ namespace MoaiEnemy.src.MoaiNormal
                     if (agent.destination == Vector3.zero || !agent.hasPath)
                     {
                         SetDestinationToPosition(GetWheelDestination());
+                        try
+                        {
+                            if (currentSearch != null)
+                            {
+                                StopSearch(currentSearch);
+                            }
+                        }
+                        catch(Exception e) { Debug.LogError(e); }
                     }
                     
                     // completion case
@@ -177,6 +186,7 @@ namespace MoaiEnemy.src.MoaiNormal
                         SnapToWheelClientRpc(true);
                         SwitchToBehaviourClientRpc((int)State.ShipPatrolling);
                         ship.InitPhaseRising();
+                        timeLeftPatrollingOffShip = UnityEngine.Random.Range(15f, 40f); 
                         return;
                     }
                     break;
@@ -187,6 +197,7 @@ namespace MoaiEnemy.src.MoaiNormal
                         Debug.Log("Pirate Moai: De ship has completed the trip. Looking for vitums yaaarg");
                         SnapToWheelClientRpc(false);
                         SwitchToBehaviourClientRpc((int)State.SearchingForPlayer);
+                        StartSearch(transform.position);
                         return;
                     }
 
@@ -216,7 +227,7 @@ namespace MoaiEnemy.src.MoaiNormal
             return hit.position;
         }
 
-        bool boardedShip = true;
+        bool boardedShip = false;
         [ClientRpc]
         public void SnapToWheelClientRpc(bool attach)
         {

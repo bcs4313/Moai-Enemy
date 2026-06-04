@@ -41,6 +41,9 @@ namespace MoaiEnemy.src.MoaiPirate
         public float yLevel = 0f; // manually controlled Y level, nav agent does not control this.
         public float targetYLevel = 0f;  // ship eases to this y level over time
         public static float yEaseRate = 0.75f;  // easing rate for rising and lowering the ship
+
+        public static float baseLandChance = 0.25f;
+        public static float landChance = 0.25f;  // accumulates land chance by 10% each time he doesn't land
         public void Update()
         {
             if(captain == null) { return; }
@@ -70,8 +73,19 @@ namespace MoaiEnemy.src.MoaiPirate
                     Vector3 adjustedDest = new Vector3(agent.destination.x, 0, agent.destination.z);
                     if (Vector3.Distance(adjustedPos, adjustedDest) < 3)
                     {
-                        InitPhaseLowering();
+                        if (UnityEngine.Random.Range(0f, 1f) < landChance)
+                        {
+                            InitPhaseLowering();
+                            landChance = baseLandChance;
+                        }
+                        else
+                        {
+                            InitPhaseTraveling(Vector3.zero);
+                            landChance += 0.1f;
+                        }
                     }
+                    break;
+                case "aggressive":
                     break;
             }
 
@@ -135,6 +149,18 @@ namespace MoaiEnemy.src.MoaiPirate
                 destination = FindDestination().transform.position;
             }
             agent.SetDestination(destination);
+        }
+
+        // Aggression Init phase works in a particular way...
+        // it oscillates on a timer, picking game objects to fight or plunder by priority
+        // Priority levels:
+        // Player: 32 - Distance from Pirate Ship + held scrap value
+        // Enemy: (9*enemyHP) - Distance (feels threatened by big tanky things, ignores invincible enemies), ignores MOAIAICORE enemies
+        // Lone Scrap: scrap value - distance
+        // bare minimum threat score to feel threatened = 20
+        public void InitPhaseAggressive()
+        {
+            phase = "aggressive";
         }
 
         [ClientRpc]
