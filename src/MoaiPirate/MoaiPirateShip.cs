@@ -7,6 +7,7 @@ using UnityEngine;
 using UnityEngine.AI;
 using GameNetcodeStuff;
 using System.Collections;
+using UnityEngine.TextCore.Text;
 
 namespace MoaiEnemy.src.MoaiPirate
 {
@@ -315,7 +316,7 @@ namespace MoaiEnemy.src.MoaiPirate
                     FireCannon();
                     break;
                 case AggressiveAction.Grapple:
-                    if(shipHornStealing) { shipHornStealing.Play(); }
+                    if (shipHornStealing) { shipHornStealing.Play(); }
                     FireGrapple();
                     break;
                 case AggressiveAction.Lower:
@@ -327,7 +328,7 @@ namespace MoaiEnemy.src.MoaiPirate
 
             // Cannon and grapple return to patrolling immediately after firing
             // Lower will transition via the landed phase detection in MoaiPirateAI
-            if (aggroAction != AggressiveAction.Lower)
+            if (aggroAction != AggressiveAction.Lower && aggroAction != AggressiveAction.Grapple)
             {
                 ExitAggressive();
             }
@@ -356,66 +357,81 @@ namespace MoaiEnemy.src.MoaiPirate
 
 
         // Method to actually call for grappling
-        public AudioSource grappleSoundEffect;
+        public AudioSource grappleFireSound;
+        public AudioSource grappleHitSound;
+        public AudioSource grappleRetractSound;
+        public ShipCableProceduralSimple grappleChain;
+        public static float grappleHoldTime = 2.4f;  // 2.4 seconds of holding
+        public static float grappleTravelSpeed = 4.2f;
+        private bool isGrappling = false;
         private void FireGrapple()
         {
-            Debug.Log("Moai Pirate Ship: [STUB] Firing grappling hook.");
+            Transform target = null;
+            if (aggroEnemy != null) target = aggroEnemy.transform;
+            else if (aggroScrap != null) target = aggroScrap.transform;
 
-            // TODO: Animate grapple hook from ship toward target, then poof
+            if (target == null)
+            {
+                Debug.Log("Moai Pirate Ship: Grapple — no valid target.");
+                return;
+            }
+
+            StartCoroutine(GrappleRoutine(target));
+        }
+
+        private IEnumerator GrappleRoutine(Transform target)
+        {
+            isGrappling = true;
+            actionExecuted = true;
+
+            grappleChain.gameObject.SetActive(true);
+            grappleChain.endPointTransform.position = grappleChain.transform.position;
+            if (grappleFireSound) grappleFireSound.Play();
+
+            // extend
+            while (target != null && Vector3.Distance(grappleChain.endPointTransform.position, target.position) > 0.4f)
+            {
+                grappleChain.endPointTransform.position = Vector3.MoveTowards(
+                    grappleChain.endPointTransform.position, target.position,
+                    grappleTravelSpeed * Time.deltaTime);
+                yield return null;
+            }
+
+            // latch
+            if (grappleHitSound) grappleHitSound.Play();
+            yield return new WaitForSeconds(grappleHoldTime);
+
+            // retract
+            if (grappleRetractSound) grappleRetractSound.Play();
+            Vector3 retractTarget = grappleChain.transform.position;
+            while (Vector3.Distance(grappleChain.endPointTransform.position, retractTarget) > 0.3f)
+            {
+                retractTarget = grappleChain.transform.position;
+                grappleChain.endPointTransform.position = Vector3.MoveTowards(
+                    grappleChain.endPointTransform.position, retractTarget,
+                    grappleTravelSpeed * 1.5f * Time.deltaTime);
+                yield return null;
+            }
+
+            // poof — aggroScrap/aggroEnemy still valid because ExitAggressive hasn't run yet
             if (aggroEnemy != null)
             {
-                Debug.Log($"Moai Pirate Ship: [STUB] Grappling enemy {aggroEnemy.enemyType.enemyName} — poofing.");
                 aggroEnemy.gameObject.SetActive(false);
                 Destroy(aggroEnemy.gameObject, 0.1f);
                 aggroEnemy = null;
             }
             else if (aggroScrap != null)
             {
-                Debug.Log($"Moai Pirate Ship: [STUB] Grappling scrap {aggroScrap.itemProperties.itemName} — poofing.");
                 aggroScrap.gameObject.SetActive(false);
                 Destroy(aggroScrap.gameObject, 0.1f);
                 aggroScrap = null;
             }
+
+            grappleChain.gameObject.SetActive(false);
+            isGrappling = false;
+            ExitAggressive();  // ← now safe to exit
         }
 
-        public void FireGrappleHelperWithTarget(Transform target)
-        {
-            StartCoroutine(GrappleRoutine(target));
-        }
-
-        private IEnumerator GrappleRoutine(Transform target)
-        {
-            // Horn already played in caller — just start cable
-            grappleRopeStart.gameObject.SetActive(true);
-            grappleRopeEnd.position = grappleRopeStart.position;
-
-            // Animate rope end toward target
-            while (target != null && Vector3.Distance(grappleRopeEnd.position, target.position) > 0.4f)
-            {
-                grappleRopeEnd.position = Vector3.MoveTowards(
-                    grappleRopeEnd.position,
-                    target.position,
-                    grappleTravelSpeed * Time.deltaTime
-                );
-                yield return null;
-            }
-
-            // Hold briefly (hook "latched")
-            yield return new WaitForSeconds(grappleHoldTime);
-
-            // Destroy/poof target
-            if (target != null)
-            {
-                // your existing poof logic here — e.g. RoundManager.Instance.DespawnScrap or DestroyEnemy
-                PoofTarget(target);
-            }
-
-            // Retract rope (optional — animate back or just disable)
-            yield return new WaitForSeconds(0.3f);
-            grappleRopeStart.gameObject.SetActive(false);
-
-            phase = ShipPhase.Rising;
-        }
 
         private void ExitAggressive()
         {
