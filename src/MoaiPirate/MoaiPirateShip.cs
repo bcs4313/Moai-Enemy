@@ -6,6 +6,7 @@ using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.AI;
 using GameNetcodeStuff;
+using System.Collections;
 
 namespace MoaiEnemy.src.MoaiPirate
 {
@@ -352,7 +353,10 @@ namespace MoaiEnemy.src.MoaiPirate
             }
         }
 
-        // STUB — replace with real grapple animation/projectile later
+
+
+        // Method to actually call for grappling
+        public AudioSource grappleSoundEffect;
         private void FireGrapple()
         {
             Debug.Log("Moai Pirate Ship: [STUB] Firing grappling hook.");
@@ -372,6 +376,45 @@ namespace MoaiEnemy.src.MoaiPirate
                 Destroy(aggroScrap.gameObject, 0.1f);
                 aggroScrap = null;
             }
+        }
+
+        public void FireGrappleHelperWithTarget(Transform target)
+        {
+            StartCoroutine(GrappleRoutine(target));
+        }
+
+        private IEnumerator GrappleRoutine(Transform target)
+        {
+            // Horn already played in caller — just start cable
+            grappleRopeStart.gameObject.SetActive(true);
+            grappleRopeEnd.position = grappleRopeStart.position;
+
+            // Animate rope end toward target
+            while (target != null && Vector3.Distance(grappleRopeEnd.position, target.position) > 0.4f)
+            {
+                grappleRopeEnd.position = Vector3.MoveTowards(
+                    grappleRopeEnd.position,
+                    target.position,
+                    grappleTravelSpeed * Time.deltaTime
+                );
+                yield return null;
+            }
+
+            // Hold briefly (hook "latched")
+            yield return new WaitForSeconds(grappleHoldTime);
+
+            // Destroy/poof target
+            if (target != null)
+            {
+                // your existing poof logic here — e.g. RoundManager.Instance.DespawnScrap or DestroyEnemy
+                PoofTarget(target);
+            }
+
+            // Retract rope (optional — animate back or just disable)
+            yield return new WaitForSeconds(0.3f);
+            grappleRopeStart.gameObject.SetActive(false);
+
+            phase = ShipPhase.Rising;
         }
 
         private void ExitAggressive()
