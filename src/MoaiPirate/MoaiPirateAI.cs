@@ -48,6 +48,7 @@ namespace MoaiEnemy.src.MoaiNormal
                 GO.GetComponent<NetworkObject>().Spawn();
                 ship = GO.GetComponent<MoaiPirateShip>();
             }
+            goodBoy = -1;
         }
 
         bool notifiedClientsOfShip = false;

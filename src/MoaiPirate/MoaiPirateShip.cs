@@ -59,7 +59,8 @@ namespace MoaiEnemy.src.MoaiPirate
 
         private float rescoreTimer = 0f;
         private const float RESCORE_INTERVAL = 3f;
-        private const float ARRIVAL_DIST = 6f;       // XZ distance to consider "arrived" at target
+        private static float ARRIVAL_DIST = 12f;       // XZ distance to consider "arrived" at target
+        private static float LAND_DIST = 6f;       // XZ distance to consider "landable" at target
         private const float MIN_ENEMY_SCORE = 20f;
 
         // stubs fire state
@@ -77,6 +78,7 @@ namespace MoaiEnemy.src.MoaiPirate
         {
             yLevel = transform.position.y;
             targetYLevel = transform.position.y;
+            grappleChain.gameObject.SetActive(false);
         }
 
         public void Update()
@@ -126,7 +128,16 @@ namespace MoaiEnemy.src.MoaiPirate
             yLevel = Mathf.Lerp(yLevel, targetYLevel, yEaseRate * Time.deltaTime);
 
             // Apply to ship model
-            shipModel.transform.position = new Vector3(transform.position.x, yLevel, transform.position.z);
+            shipModel.transform.position = new Vector3(transform.position.x, transform.position.y + yLevel, transform.position.z);
+        }
+
+        // simulate game object being pulled
+        public void LateUpdate()
+        {
+            if(grabbedGO)
+            {
+                grabbedGO.transform.position = grappleChain.endPointTransform.position;
+            }
         }
 
         // ─────────────────────────────────────────────────────────────────
@@ -204,7 +215,7 @@ namespace MoaiEnemy.src.MoaiPirate
                     bestEnemy = null;
                     bestScrap = null;
                     // 85/15: cannon or lower
-                    bestAction = UnityEngine.Random.value < fireCannonOverLoweringChance ? AggressiveAction.Cannon : AggressiveAction.Lower;
+                    bestAction = (UnityEngine.Random.value < fireCannonOverLoweringChance && dist <= LAND_DIST) ? AggressiveAction.Cannon : AggressiveAction.Lower;
                 }
             }
 
@@ -227,11 +238,18 @@ namespace MoaiEnemy.src.MoaiPirate
                     bestPlayer = null;
                     bestEnemy = enemy;
                     bestScrap = null;
-                    // 33% each: cannon, grapple, lower
                     float roll = UnityEngine.Random.value;
-                    bestAction = roll < 0.333f ? AggressiveAction.Cannon
-                               : roll < 0.666f ? AggressiveAction.Grapple
-                               : AggressiveAction.Lower;
+
+                    if(dist <= LAND_DIST)
+                    {
+                        bestAction = roll < 0.666f ? AggressiveAction.Cannon
+                       : roll < 0.333f ? AggressiveAction.Grapple
+                       : AggressiveAction.Lower;
+                    }
+                    else // 75% cannon and 25% grapple
+                    {
+                        bestAction = roll < 0.75f ? AggressiveAction.Cannon : AggressiveAction.Grapple;
+                    }
                 }
             }
 
@@ -362,8 +380,9 @@ namespace MoaiEnemy.src.MoaiPirate
         public AudioSource grappleRetractSound;
         public ShipCableProceduralSimple grappleChain;
         public static float grappleHoldTime = 2.4f;  // 2.4 seconds of holding
-        public static float grappleTravelSpeed = 4.2f;
+        public static float grappleTravelSpeed = 8f;
         public bool isGrappling = false;
+        public GameObject grabbedGO;
         private void FireGrapple()
         {
             Transform target = null;
@@ -381,6 +400,8 @@ namespace MoaiEnemy.src.MoaiPirate
 
         private IEnumerator GrappleRoutine(Transform target)
         {
+            if(isGrappling) { yield break; }
+ 
             isGrappling = true;
             actionExecuted = true;
 
@@ -399,7 +420,19 @@ namespace MoaiEnemy.src.MoaiPirate
 
             // latch
             if (grappleHitSound) grappleHitSound.Play();
+
+            // disabling enemies / item props, moving them with the grapple:::
+            if(target.gameObject)
+            {
+                grabbedGO = target.gameObject;
+                var GO = target.gameObject;
+                // disabling components that oveerride transforms
+                if(GO.GetComponent<EnemyAI>()) { GO.GetComponent<EnemyAI>().enabled = false; }
+                if (GO.GetComponent<NavMeshAgent>()) { GO.GetComponent<NavMeshAgent>().enabled = false; }
+                if (GO.GetComponent<GrabbableObject>()) { GO.GetComponent<GrabbableObject>().enabled = false; }
+            }
             yield return new WaitForSeconds(grappleHoldTime);
+
 
             // retract
             if (grappleRetractSound) grappleRetractSound.Play();
@@ -429,6 +462,7 @@ namespace MoaiEnemy.src.MoaiPirate
 
             grappleChain.gameObject.SetActive(false);
             isGrappling = false;
+            grabbedGO = null;
             ExitAggressive();  // ← now safe to exit
         }
 
