@@ -209,6 +209,9 @@ namespace MoaiEnemy.src.MoaiNormal
                     // We just watch for the ship dropping back to traveling/landed,
                     // which signals that the aggressive phase ended.
 
+                    // if grappling, we must remain aggressive until the ship is done doing so
+                    if(ship.isGrappling) { return; }
+
                     if (ship.phase.Equals("traveling") || ship.phase.Equals("rising"))
                     {
                         // Ship finished its aggressive action, resume patrolling

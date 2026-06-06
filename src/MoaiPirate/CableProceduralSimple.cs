@@ -79,10 +79,13 @@ namespace MoaiEnemy.src.MoaiPirate
 
         void Draw()
         {
-            if (!endPointTransform)
-            {
-                return;
-            }
+            if (!endPointTransform) return;
+
+            // Recalc every frame so rope tracks end transform movement
+            vectorFromStartToEnd = endPointTransform.position - transform.position;
+            transform.forward = vectorFromStartToEnd.normalized;
+            pointsInLineRenderer = Mathf.Max(2, Mathf.FloorToInt(pointDensity * vectorFromStartToEnd.magnitude));
+            line.positionCount = pointsInLineRenderer;
 
             // What point is being calculated
             int i = 0;

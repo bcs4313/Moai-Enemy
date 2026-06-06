@@ -363,7 +363,7 @@ namespace MoaiEnemy.src.MoaiPirate
         public ShipCableProceduralSimple grappleChain;
         public static float grappleHoldTime = 2.4f;  // 2.4 seconds of holding
         public static float grappleTravelSpeed = 4.2f;
-        private bool isGrappling = false;
+        public bool isGrappling = false;
         private void FireGrapple()
         {
             Transform target = null;
