@@ -110,7 +110,7 @@ namespace MoaiEnemy.src.MoaiNormal
         }
 
         float timeLeftPatrollingOffShip = 0f;
-        public static float shipSightRange = 25f;
+        public static float shipSightRange = 60f;
 
         public override void DoAIInterval()
         {
@@ -128,7 +128,7 @@ namespace MoaiEnemy.src.MoaiNormal
 
                     if (timeLeftPatrollingOffShip <= 0)
                     {
-                        timeLeftPatrollingOffShip = UnityEngine.Random.Range(5f, 26f);
+                        timeLeftPatrollingOffShip = UnityEngine.Random.Range(5f, 20f);
                         SwitchToBehaviourClientRpc((int)State.HeadingToShip);
                         targetPlayer = null;
                         SetDestinationToPosition(GetWheelDestination());
@@ -178,7 +178,7 @@ namespace MoaiEnemy.src.MoaiNormal
                         SnapToWheelClientRpc(true);
                         SwitchToBehaviourClientRpc((int)State.ShipPatrolling);
                         ship.InitPhaseRising();
-                        timeLeftPatrollingOffShip = UnityEngine.Random.Range(15f, 40f);
+                        timeLeftPatrollingOffShip = UnityEngine.Random.Range(5f, 20f);
                         return;
                     }
                     break;
@@ -195,7 +195,7 @@ namespace MoaiEnemy.src.MoaiNormal
                     }
 
                     // Exit 2: target spotted — hand off to ship's aggressive scoring
-                    if (FoundClosestPlayerInRange(shipSightRange, false))
+                    if (FoundClosestPlayerInRange(shipSightRange, true))
                     {
                         Debug.Log("Pirate Moai: Target spotted! Entering aggressive phase yaaarg");
                         ship.InitPhaseAggressive();

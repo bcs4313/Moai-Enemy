@@ -46,6 +46,9 @@ namespace MoaiEnemy.src.MoaiPirate
         // ── Aggressive state ──────────────────────────────────────────────
         public enum AggressiveAction { Cannon, Grapple, Lower }
 
+        public static float cannonFireCooldownMin = 0.3f;
+        public static float cannonFireCooldownMax = 9f;
+
         // The current scored target (one of these will be non-null)
         public PlayerControllerB aggroPlayer = null;
         public EnemyAI aggroEnemy = null;
@@ -55,11 +58,18 @@ namespace MoaiEnemy.src.MoaiPirate
         private float rescoreTimer = 0f;
         private const float RESCORE_INTERVAL = 3f;
         private const float ARRIVAL_DIST = 6f;       // XZ distance to consider "arrived" at target
-        private const float AGGRO_SIGHT_DIST = 40f;  // distance to keep tracking target before giving up
         private const float MIN_ENEMY_SCORE = 20f;
 
         // stubs fire state
         private bool actionExecuted = false;
+
+        // Audio Sources
+        public AudioSource shipHornThreaten;  // more menacing horn  // 
+        public static float shipHornThreatenCooldownMin = 0.25f;
+        public static float shipHornThreatenCooldownMax = 12f;
+        public AudioSource shipHornStealing; // steal sound indicator  //
+        public AudioSource landingBell; // indicates the ship is landing  //
+        public AudioSource shipTakingOffSound;  // heavy creaking sfx
 
         void Start()
         {
@@ -105,7 +115,7 @@ namespace MoaiEnemy.src.MoaiPirate
                         }
                     }
                     break;
-                case "aggressive":
+                case "aggressive":  // started by InitPhaseAggressive() from MoaiPirateAI, if it sees someone
                     UpdateAggressive();
                     break;
             }
@@ -153,6 +163,8 @@ namespace MoaiEnemy.src.MoaiPirate
             }
         }
 
+
+        public static float fireCannonOverLoweringChance = 0.80f;  // 80% = avg of 5 shots before lowering
         // ─────────────────────────────────────────────────────────────────
         //  SCORING
         // ─────────────────────────────────────────────────────────────────
@@ -170,7 +182,7 @@ namespace MoaiEnemy.src.MoaiPirate
                 if (player == null || player.isPlayerDead || !player.isPlayerControlled) continue;
 
                 float dist = Vector3.Distance(transform.position, player.transform.position);
-                if (dist > AGGRO_SIGHT_DIST) continue;
+                if (dist > MoaiPirateAI.shipSightRange * 1.33f) continue;
 
                 int heldValue = 0;
                 if (player.ItemSlots != null)
@@ -189,8 +201,8 @@ namespace MoaiEnemy.src.MoaiPirate
                     bestPlayer = player;
                     bestEnemy = null;
                     bestScrap = null;
-                    // 50/50: cannon or lower
-                    bestAction = UnityEngine.Random.value < 0.5f ? AggressiveAction.Cannon : AggressiveAction.Lower;
+                    // 85/15: cannon or lower
+                    bestAction = UnityEngine.Random.value < fireCannonOverLoweringChance ? AggressiveAction.Cannon : AggressiveAction.Lower;
                 }
             }
 
@@ -202,7 +214,7 @@ namespace MoaiEnemy.src.MoaiPirate
                 if (enemy.enemyHP <= 0) continue;   // invincible / already dead
 
                 float dist = Vector3.Distance(transform.position, enemy.transform.position);
-                if (dist > AGGRO_SIGHT_DIST) continue;
+                if (dist > MoaiPirateAI.shipSightRange * 1.33f) continue;
 
                 float score = (9f * enemy.enemyHP) - dist;
                 if (score < MIN_ENEMY_SCORE) continue;
@@ -228,7 +240,7 @@ namespace MoaiEnemy.src.MoaiPirate
                 if (item.isHeld || item.isHeldByEnemy) continue;  // skip held items
 
                 float dist = Vector3.Distance(transform.position, item.transform.position);
-                if (dist > AGGRO_SIGHT_DIST) continue;
+                if (dist > MoaiPirateAI.shipSightRange * 1.33f) continue;
 
                 float score = item.scrapValue - dist;
                 if (score > bestScore)
@@ -264,19 +276,19 @@ namespace MoaiEnemy.src.MoaiPirate
             {
                 if (aggroPlayer.isPlayerDead || !aggroPlayer.isPlayerControlled) return false;
                 float dist = Vector3.Distance(transform.position, aggroPlayer.transform.position);
-                return dist <= AGGRO_SIGHT_DIST;
+                return dist <= MoaiPirateAI.shipSightRange * 1.33f;
             }
             if (aggroEnemy != null)
             {
                 if (aggroEnemy.isEnemyDead || aggroEnemy == null) return false;
                 float dist = Vector3.Distance(transform.position, aggroEnemy.transform.position);
-                return dist <= AGGRO_SIGHT_DIST;
+                return dist <= MoaiPirateAI.shipSightRange * 1.33f;
             }
             if (aggroScrap != null)
             {
                 if (aggroScrap == null) return false;
                 float dist = Vector3.Distance(transform.position, aggroScrap.transform.position);
-                return dist <= AGGRO_SIGHT_DIST;
+                return dist <= MoaiPirateAI.shipSightRange * 1.33f;
             }
             return false;
         }
@@ -302,10 +314,12 @@ namespace MoaiEnemy.src.MoaiPirate
                     FireCannon();
                     break;
                 case AggressiveAction.Grapple:
+                    if(shipHornStealing) { shipHornStealing.Play(); }
                     FireGrapple();
                     break;
                 case AggressiveAction.Lower:
                     InitPhaseLowering();
+                    Debug.Log("Aggressive Action: Lowering Ship...");
                     // MoaiPirateAI handles the rest once landed
                     break;
             }
@@ -382,6 +396,7 @@ namespace MoaiEnemy.src.MoaiPirate
         public static float highestHeight = 25f;
         public void InitPhaseRising()
         {
+            if(shipTakingOffSound) { shipTakingOffSound.Play(); }
             phase = "rising";
             targetYLevel = transform.position.y + UnityEngine.Random.Range(lowestHeight, highestHeight);
             Debug.Log("Moai Pirate Ship: rising to height of: " + targetYLevel);
@@ -390,12 +405,12 @@ namespace MoaiEnemy.src.MoaiPirate
         public void InitPhaseLowering()
         {
             phase = "lowering";
-            Physics.Raycast(shipModel.transform.position, Vector3.down, out RaycastHit hitInfo, 500f,
-                LayerMask.GetMask("Default", "Room", "Terrain", "Colliders"));
+            var validHit = NavMesh.SamplePosition(transform.position, out NavMeshHit hit, 30f, NavMesh.AllAreas);
 
-            if (hitInfo.collider != null)
+            if (validHit)
             {
-                targetYLevel = hitInfo.point.y;
+                targetYLevel = hit.position.y;
+                if(landingBell) { landingBell.Play(); }
             }
             else
             {
@@ -422,8 +437,12 @@ namespace MoaiEnemy.src.MoaiPirate
             agent.SetDestination(destination);
         }
 
+        // the ship will go through a phase where it targets enemies through a scoring 
+        // system. Then it will select the highest scoring target, executing a specific action
+        // based on rng.
         public void InitPhaseAggressive()
         {
+            if (shipHornThreaten) { shipHornThreaten.Play(); };
             phase = "aggressive";
             rescoreTimer = 0f;   // score immediately on first update
             actionExecuted = false;
