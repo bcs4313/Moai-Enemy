@@ -211,7 +211,7 @@ namespace MoaiEnemy.src.MoaiNormal
                     // which signals that the aggressive phase ended.
 
                     // if grappling, we must remain aggressive until the ship is done doing so
-                    if(ship.isGrappling) { return; }
+                    if (ship.isGrappling) { return; }
 
                     if (ship.phase.Equals("traveling") || ship.phase.Equals("rising"))
                     {
