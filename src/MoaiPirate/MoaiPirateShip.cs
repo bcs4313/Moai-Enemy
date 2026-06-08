@@ -82,6 +82,9 @@ namespace MoaiEnemy.src.MoaiPirate
             grappleChain.gameObject.SetActive(false);
         }
 
+        float baseSpeed = 3.2f;
+        float speedWhenGrappling = 6.2f;
+        public static float cruiserGrappleAscensionSpeed = 2f;
         public void Update()
         {
             if (captain == null) { return; }
@@ -130,6 +133,21 @@ namespace MoaiEnemy.src.MoaiPirate
 
             // Apply to ship model
             shipModel.transform.position = new Vector3(transform.position.x, transform.position.y + yLevel, transform.position.z);
+
+            // agent speeds
+            if(isGrappling)
+            {
+                agent.speed = baseSpeed;
+            }
+            else
+            {
+                agent.speed = speedWhenGrappling;
+            }
+
+            if(grapplingCruiser)
+            {
+                targetYLevel += cruiserGrappleAscensionSpeed * Time.deltaTime;
+            }
         }
 
         // simulate game object being pulled
@@ -558,7 +576,7 @@ namespace MoaiEnemy.src.MoaiPirate
         public static float cruiserFleeSpeed = 8f;       // how far ahead of itself the ship runs while fleeing
         public static float cruiserFleeSampleRadius = 25f; // NavMesh sample radius when picking flee point
         public static float cruiserDragForce = 60f;      // force applied to cruiser rigidbody each frame
-
+        bool grapplingCruiser = false;
         private IEnumerator CruiserGrappleRoutine(VehicleController cruiser)
         {
             if (isGrappling) { yield break; }
@@ -595,6 +613,7 @@ namespace MoaiEnemy.src.MoaiPirate
             // latch
             if (grappleHitSound) grappleHitSound.Play();
             Debug.Log("Moai Pirate Ship: Cruiser grapple latched — beginning flee.");
+            grapplingCruiser = true;
 
             // ── 3. Hold + Flee phase ──────────────────────────────────────
             // During this phase:
@@ -681,6 +700,7 @@ namespace MoaiEnemy.src.MoaiPirate
 
             grappleChain.gameObject.SetActive(false);
             isGrappling = false;
+            grapplingCruiser = false;
             aggroCruiser = null;
             ExitAggressive();
         }
