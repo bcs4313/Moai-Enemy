@@ -150,11 +150,36 @@ namespace MoaiEnemy.src.MoaiPirate
             }
         }
 
-        // simulate game object being pulled
         public void LateUpdate()
         {
-            if (grabbedGO)
+            if (grabbedGO && grapplingCruiser)
             {
+                // Cruiser hold phase: chain endpoint bounces around below ship
+                chainSwingTimer -= Time.deltaTime;
+                if (chainSwingTimer <= 0f)
+                {
+                    chainSwingTimer = chainSwingInterval;
+                    // Pick new random offset below the ship in XZ
+                    Vector2 randCircle = UnityEngine.Random.insideUnitCircle * chainSwingRadius;
+                    float targetY = shipModel.transform.position.y - chainHangDepth;
+                    // Clamp: never below the navagent's Y (ground level)
+                    targetY = Mathf.Max(targetY, transform.position.y);
+                    chainSimTarget = new Vector3(
+                        shipModel.transform.position.x + randCircle.x,
+                        targetY,
+                        shipModel.transform.position.z + randCircle.y
+                    );
+                }
+
+                chainSimCurrent = Vector3.Lerp(chainSimCurrent, chainSimTarget, chainSwingEase * Time.deltaTime);
+                grappleChain.endPointTransform.position = chainSimCurrent;
+
+                // Keep cruiser pinned to chain tip
+                grabbedGO.transform.position = chainSimCurrent;
+            }
+            else if (grabbedGO)
+            {
+                // Normal grapple (scrap/enemy) — snap as before
                 grabbedGO.transform.position = grappleChain.endPointTransform.position;
             }
         }
@@ -671,6 +696,7 @@ namespace MoaiEnemy.src.MoaiPirate
             if (grappleHitSound) grappleHitSound.Play();
             Debug.Log("Moai Pirate Ship: Cruiser grapple latched — beginning flee.");
             grapplingCruiser = true;
+            chainSimCurrent = grappleChain.endPointTransform.position;  // start from where chain landed
 
             // ── 3. Hold + Flee phase ──────────────────────────────────────
             // During this phase:
@@ -761,6 +787,16 @@ namespace MoaiEnemy.src.MoaiPirate
             aggroCruiser = null;
             ExitAggressive();
         }
+
+        // ── Chain swing sim ───────────────────────────────────────────────
+        private Vector3 chainSimTarget = Vector3.zero;
+        private Vector3 chainSimCurrent = Vector3.zero;
+        private float chainSwingTimer = 0f;
+        public static float chainSwingInterval = 0.6f;   // how often it picks a new random target
+        public static float chainSwingRadius = 3f;        // max XZ wander radius
+        public static float chainSwingEase = 4f;          // lerp speed toward new target
+        public static float chainHangDepth = 6f;          // how far below the ship it hangs
+
 
 
         private void ExitAggressive()
