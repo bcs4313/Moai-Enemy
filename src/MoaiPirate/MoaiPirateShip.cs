@@ -111,7 +111,7 @@ namespace MoaiEnemy.src.MoaiPirate
                     Vector3 adjustedDest = new Vector3(agent.destination.x, 0, agent.destination.z);
                     if (Vector3.Distance(adjustedPos, adjustedDest) < 3)
                     {
-                        if (UnityEngine.Random.Range(0f, 1f) < landChance)
+                        if (UnityEngine.Random.Range(0f, 1f) < landChance && !isGrappling)
                         {
                             InitPhaseLowering();
                             landChance = baseLandChance;
@@ -137,11 +137,11 @@ namespace MoaiEnemy.src.MoaiPirate
             // agent speeds
             if(isGrappling)
             {
-                agent.speed = baseSpeed;
+                agent.speed = speedWhenGrappling;
             }
             else
             {
-                agent.speed = speedWhenGrappling;
+                agent.speed = baseSpeed;
             }
 
             if(grapplingCruiser)
@@ -176,7 +176,7 @@ namespace MoaiEnemy.src.MoaiPirate
                 ScoreAndPickTarget();
             }
 
-            // No target — give up, go back to patrolling
+            // No target — give up, go back to patrolling iff not grappling
             if (!HasValidTarget())
             {
                 Debug.Log("Moai Pirate Ship: Lost target, resuming patrol.");
@@ -388,7 +388,35 @@ namespace MoaiEnemy.src.MoaiPirate
             }
             if (aggroCruiser != null)
             {
-                pos = aggroCruiser.transform.position;
+                Vector3 cruiserXZ = aggroCruiser.transform.position;
+
+
+                // upward alternative vector, goes underground and hits terrain surface
+                Vector3 samplePoint = GetNearestNode(cruiserXZ).transform.position;
+
+                // using a system that acquires the navmesh mask from an AI node
+                GameObject node = GetNearestNode(aggroCruiser.transform.position);
+                if (NavMesh.SamplePosition(node.transform.position, out NavMeshHit nodeHit, 5f, NavMesh.AllAreas))
+                {
+                    Debug.Log("Moai Pirate Ship: Used filter with AI Nodes for tracking cruiser");
+                    NavMeshQueryFilter filter2 = new NavMeshQueryFilter
+                    {
+                        agentTypeID = agent.agentTypeID,
+                        areaMask = nodeHit.mask  // mask of the surface the node sits on = environment navmesh
+                    };
+
+                    if (NavMesh.SamplePosition(aggroCruiser.transform.position, out NavMeshHit hit2, 15f, filter2))
+                        return hit2.position;
+                }
+
+                if (NavMesh.SamplePosition(samplePoint, out NavMeshHit navHit, 5f, NavMesh.AllAreas))
+                {
+                    Debug.Log("Moai Pirate Ship: Used AI Nodes for tracking cruiser");
+                    return navHit.position;
+                }
+
+                Debug.Log("Moai Pirate Ship: Using fallback for tracking cruiser");
+                return aggroCruiser.transform.position; // fallback
             }
 
             if(pos == Vector3.zero)
@@ -396,7 +424,13 @@ namespace MoaiEnemy.src.MoaiPirate
                 Debug.LogError("Moai Pirate Ship Error: no target available to set destination. This error should not be thrown!");
             }
 
-            bool result = NavMesh.SamplePosition(pos, out NavMeshHit hit, 15f, NavMesh.AllAreas);
+            NavMeshQueryFilter filter = new NavMeshQueryFilter
+            {
+                agentTypeID = agent.agentTypeID,
+                areaMask = NavMesh.AllAreas
+            };
+
+            bool result = NavMesh.SamplePosition(pos, out NavMeshHit hit, 15f, filter);
 
             if(result)
             {
@@ -406,6 +440,22 @@ namespace MoaiEnemy.src.MoaiPirate
             {
                 return pos;
             }
+        }
+
+        public GameObject GetNearestNode(Vector3 pos)
+        {
+            GameObject bestGO = null;
+            float bestDist = 999999f;
+            foreach(GameObject GO in RoundManager.Instance.outsideAINodes)
+            {
+                var dist = Vector3.Distance(GO.transform.position, pos);
+                if (Vector3.Distance(GO.transform.position, pos) < bestDist)
+                {
+                    bestDist = dist;
+                    bestGO = GO;
+                }
+            }
+            return bestGO;
         }
 
         // ─────────────────────────────────────────────────────────────────
@@ -425,8 +475,15 @@ namespace MoaiEnemy.src.MoaiPirate
                     FireGrapple();
                     break;
                 case AggressiveAction.Lower:
-                    InitPhaseLowering();
-                    Debug.Log("Aggressive Action: Lowering Ship...");
+                    if (!isGrappling)
+                    {
+                        InitPhaseLowering();
+                        Debug.Log("Aggressive Action: Lowering Ship...");
+                    }
+                    else
+                    {
+                        Debug.Log("Aggressive Action: Refusing to lower ship as the ship is grappling something.");
+                    }
                     // MoaiPirateAI handles the rest once landed
                     break;
             }
@@ -572,7 +629,7 @@ namespace MoaiEnemy.src.MoaiPirate
         //  and the ship exits aggressive.
         // ─────────────────────────────────────────────────────────────────
         public static float cruiserGrappleHoldTimeMin = 5f;
-        public static float cruiserGrappleHoldTimeMax = 40f;
+        public static float cruiserGrappleHoldTimeMax = 30f;
         public static float cruiserFleeSpeed = 8f;       // how far ahead of itself the ship runs while fleeing
         public static float cruiserFleeSampleRadius = 25f; // NavMesh sample radius when picking flee point
         public static float cruiserDragForce = 60f;      // force applied to cruiser rigidbody each frame
