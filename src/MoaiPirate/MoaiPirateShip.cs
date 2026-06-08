@@ -1,12 +1,13 @@
 ﻿using MoaiEnemy.src.MoaiNormal;
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Text;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.AI;
 using GameNetcodeStuff;
+using System.Collections;
+using UnityEngine.TextCore.Text;
 
 namespace MoaiEnemy.src.MoaiPirate
 {
@@ -47,29 +48,38 @@ namespace MoaiEnemy.src.MoaiPirate
         // ── Aggressive state ──────────────────────────────────────────────
         public enum AggressiveAction { Cannon, Grapple, Lower }
 
+        public static float cannonFireCooldownMin = 0.3f;
+        public static float cannonFireCooldownMax = 9f;
+
         // The current scored target (one of these will be non-null)
         public PlayerControllerB aggroPlayer = null;
         public EnemyAI aggroEnemy = null;
         public GrabbableObject aggroScrap = null;
-        public VehicleController aggroCruiser = null;
+        public VehicleController aggroCruiser = null;   // cruiser target — always Grapple action
         public AggressiveAction aggroAction;
-
-        // Grapple state — set true during CruiserGrappleRoutine hold phase
-        public bool isGrappling = false;
 
         private float rescoreTimer = 0f;
         private const float RESCORE_INTERVAL = 3f;
-        private const float ARRIVAL_DIST = 6f;       // XZ distance to consider "arrived" at target
-        private const float AGGRO_SIGHT_DIST = 40f;  // distance to keep tracking target before giving up
+        private static float ARRIVAL_DIST = 12f;       // XZ distance to consider "arrived" at target
+        private static float LAND_DIST = 6f;           // XZ distance to consider "landable" at target
         private const float MIN_ENEMY_SCORE = 20f;
 
         // stubs fire state
         private bool actionExecuted = false;
 
+        // Audio Sources
+        public AudioSource shipHornThreaten;  // more menacing horn
+        public static float shipHornThreatenCooldownMin = 0.25f;
+        public static float shipHornThreatenCooldownMax = 12f;
+        public AudioSource shipHornStealing; // steal sound indicator
+        public AudioSource landingBell;      // indicates the ship is landing
+        public AudioSource shipTakingOffSound;  // heavy creaking sfx
+
         void Start()
         {
             yLevel = transform.position.y;
             targetYLevel = transform.position.y;
+            grappleChain.gameObject.SetActive(false);
         }
 
         public void Update()
@@ -110,7 +120,7 @@ namespace MoaiEnemy.src.MoaiPirate
                         }
                     }
                     break;
-                case "aggressive":
+                case "aggressive":  // started by InitPhaseAggressive() from MoaiPirateAI, if it sees someone
                     UpdateAggressive();
                     break;
             }
@@ -119,7 +129,16 @@ namespace MoaiEnemy.src.MoaiPirate
             yLevel = Mathf.Lerp(yLevel, targetYLevel, yEaseRate * Time.deltaTime);
 
             // Apply to ship model
-            shipModel.transform.position = new Vector3(transform.position.x, yLevel, transform.position.z);
+            shipModel.transform.position = new Vector3(transform.position.x, transform.position.y + yLevel, transform.position.z);
+        }
+
+        // simulate game object being pulled
+        public void LateUpdate()
+        {
+            if (grabbedGO)
+            {
+                grabbedGO.transform.position = grappleChain.endPointTransform.position;
+            }
         }
 
         // ─────────────────────────────────────────────────────────────────
@@ -127,7 +146,8 @@ namespace MoaiEnemy.src.MoaiPirate
         // ─────────────────────────────────────────────────────────────────
         private void UpdateAggressive()
         {
-            // During cruiser grapple hold, the coroutine drives the ship — hands off
+            // While the cruiser grapple coroutine is running, ship movement is managed
+            // inside CruiserGrappleRoutine — don't interfere here
             if (isGrappling) return;
 
             // Re-score on timer
@@ -161,6 +181,8 @@ namespace MoaiEnemy.src.MoaiPirate
             }
         }
 
+
+        public static float fireCannonOverLoweringChance = 0.80f;  // 80% = avg of 5 shots before lowering
         // ─────────────────────────────────────────────────────────────────
         //  SCORING
         // ─────────────────────────────────────────────────────────────────
@@ -170,6 +192,7 @@ namespace MoaiEnemy.src.MoaiPirate
             PlayerControllerB bestPlayer = null;
             EnemyAI bestEnemy = null;
             GrabbableObject bestScrap = null;
+            VehicleController bestCruiser = null;
             AggressiveAction bestAction = AggressiveAction.Cannon;
 
             // ── Players ───────────────────────────────────────────────────
@@ -178,7 +201,7 @@ namespace MoaiEnemy.src.MoaiPirate
                 if (player == null || player.isPlayerDead || !player.isPlayerControlled) continue;
 
                 float dist = Vector3.Distance(transform.position, player.transform.position);
-                if (dist > AGGRO_SIGHT_DIST) continue;
+                if (dist > MoaiPirateAI.shipSightRange * 1.33f) continue;
 
                 int heldValue = 0;
                 if (player.ItemSlots != null)
@@ -197,8 +220,9 @@ namespace MoaiEnemy.src.MoaiPirate
                     bestPlayer = player;
                     bestEnemy = null;
                     bestScrap = null;
-                    // 50/50: cannon or lower
-                    bestAction = UnityEngine.Random.value < 0.5f ? AggressiveAction.Cannon : AggressiveAction.Lower;
+                    bestCruiser = null;
+                    // 85/15: cannon or lower
+                    bestAction = (UnityEngine.Random.value < fireCannonOverLoweringChance && dist <= LAND_DIST) ? AggressiveAction.Cannon : AggressiveAction.Lower;
                 }
             }
 
@@ -210,7 +234,7 @@ namespace MoaiEnemy.src.MoaiPirate
                 if (enemy.enemyHP <= 0) continue;   // invincible / already dead
 
                 float dist = Vector3.Distance(transform.position, enemy.transform.position);
-                if (dist > AGGRO_SIGHT_DIST) continue;
+                if (dist > MoaiPirateAI.shipSightRange * 1.33f) continue;
 
                 float score = (9f * enemy.enemyHP) - dist;
                 if (score < MIN_ENEMY_SCORE) continue;
@@ -221,11 +245,19 @@ namespace MoaiEnemy.src.MoaiPirate
                     bestPlayer = null;
                     bestEnemy = enemy;
                     bestScrap = null;
-                    // 33% each: cannon, grapple, lower
+                    bestCruiser = null;
                     float roll = UnityEngine.Random.value;
-                    bestAction = roll < 0.333f ? AggressiveAction.Cannon
-                               : roll < 0.666f ? AggressiveAction.Grapple
-                               : AggressiveAction.Lower;
+
+                    if (dist <= LAND_DIST)
+                    {
+                        bestAction = roll < 0.666f ? AggressiveAction.Cannon
+                                   : roll < 0.333f ? AggressiveAction.Grapple
+                                   : AggressiveAction.Lower;
+                    }
+                    else // 75% cannon and 25% grapple
+                    {
+                        bestAction = roll < 0.75f ? AggressiveAction.Cannon : AggressiveAction.Grapple;
+                    }
                 }
             }
 
@@ -236,7 +268,7 @@ namespace MoaiEnemy.src.MoaiPirate
                 if (item.isHeld || item.isHeldByEnemy) continue;  // skip held items
 
                 float dist = Vector3.Distance(transform.position, item.transform.position);
-                if (dist > AGGRO_SIGHT_DIST) continue;
+                if (dist > MoaiPirateAI.shipSightRange * 1.33f) continue;
 
                 float score = item.scrapValue - dist;
                 if (score > bestScore)
@@ -245,20 +277,21 @@ namespace MoaiEnemy.src.MoaiPirate
                     bestPlayer = null;
                     bestEnemy = null;
                     bestScrap = item;
+                    bestCruiser = null;
                     bestAction = AggressiveAction.Grapple;  // scrap always grappled
                 }
             }
 
             // ── Cruiser ───────────────────────────────────────────────────
-            VehicleController bestCruiser = null;
-            foreach (VehicleController vehicle in FindObjectsOfType<VehicleController>())
+            // Cruiser is a very high-priority target — score = 180 - dist, always Grapple
+            foreach (VehicleController cruiser in FindObjectsOfType<VehicleController>())
             {
-                if (vehicle == null || vehicle.carDestroyed) continue;
+                if (cruiser == null) continue;
+                if (cruiser.carDestroyed) continue;
 
-                float dist = Vector3.Distance(transform.position, vehicle.transform.position);
-                if (dist > AGGRO_SIGHT_DIST) continue;
+                float dist = Vector3.Distance(transform.position, cruiser.transform.position);
+                if (dist > MoaiPirateAI.shipSightRange * 1.33f) continue;
 
-                // Cruiser always scores very high — pirate ships love stealing cars
                 float score = 180f - dist;
                 if (score > bestScore)
                 {
@@ -266,7 +299,7 @@ namespace MoaiEnemy.src.MoaiPirate
                     bestPlayer = null;
                     bestEnemy = null;
                     bestScrap = null;
-                    bestCruiser = vehicle;
+                    bestCruiser = cruiser;
                     bestAction = AggressiveAction.Grapple;  // cruiser always grappled
                 }
             }
@@ -286,7 +319,7 @@ namespace MoaiEnemy.src.MoaiPirate
             else if (aggroScrap != null)
                 Debug.Log($"Moai Pirate Ship: Targeting scrap {aggroScrap.itemProperties.itemName}, score={bestScore}");
             else if (aggroCruiser != null)
-                Debug.Log($"Moai Pirate Ship: Targeting cruiser, action=Grapple, score={bestScore}");
+                Debug.Log($"Moai Pirate Ship: Targeting cruiser at {aggroCruiser.transform.position}, action=Grapple, score={bestScore}");
             else
                 Debug.Log("Moai Pirate Ship: No valid target found during rescore.");
         }
@@ -297,40 +330,68 @@ namespace MoaiEnemy.src.MoaiPirate
             {
                 if (aggroPlayer.isPlayerDead || !aggroPlayer.isPlayerControlled) return false;
                 float dist = Vector3.Distance(transform.position, aggroPlayer.transform.position);
-                return dist <= AGGRO_SIGHT_DIST;
+                return dist <= MoaiPirateAI.shipSightRange * 1.33f;
             }
             if (aggroEnemy != null)
             {
-                if (aggroEnemy == null || aggroEnemy.isEnemyDead) return false;
+                if (aggroEnemy.isEnemyDead || aggroEnemy == null) return false;
                 float dist = Vector3.Distance(transform.position, aggroEnemy.transform.position);
-                return dist <= AGGRO_SIGHT_DIST;
+                return dist <= MoaiPirateAI.shipSightRange * 1.33f;
             }
             if (aggroScrap != null)
             {
                 if (aggroScrap == null) return false;
                 float dist = Vector3.Distance(transform.position, aggroScrap.transform.position);
-                return dist <= AGGRO_SIGHT_DIST;
+                return dist <= MoaiPirateAI.shipSightRange * 1.33f;
             }
             if (aggroCruiser != null)
             {
-                if (aggroCruiser.carDestroyed) return false;
+                if (aggroCruiser == null || aggroCruiser.carDestroyed) return false;
                 float dist = Vector3.Distance(transform.position, aggroCruiser.transform.position);
-                return dist <= AGGRO_SIGHT_DIST;
+                return dist <= MoaiPirateAI.shipSightRange * 1.33f;
             }
             return false;
         }
 
         private Vector3 GetTargetPosition()
         {
-            if (aggroPlayer != null) return aggroPlayer.transform.position;
-            if (aggroEnemy != null) return aggroEnemy.transform.position;
-            if (aggroScrap != null) return aggroScrap.transform.position;
-            if (aggroCruiser != null) return aggroCruiser.transform.position;
-            return transform.position;
+            Vector3 pos = Vector3.zero;
+            if (aggroPlayer != null)
+            {
+                pos = aggroPlayer.transform.position;
+            }
+            if (aggroEnemy != null)
+            {
+                pos = aggroEnemy.transform.position;
+            }
+            if (aggroScrap != null)
+            {
+                pos = aggroScrap.transform.position;
+            }
+            if (aggroCruiser != null)
+            {
+                pos = aggroCruiser.transform.position;
+            }
+
+            if(pos == Vector3.zero)
+            {
+                Debug.LogError("Moai Pirate Ship Error: no target available to set destination. This error should not be thrown!");
+            }
+
+            bool result = NavMesh.SamplePosition(pos, out NavMeshHit hit, 15f, NavMesh.AllAreas);
+
+            if(result)
+            {
+                return hit.position;
+            }
+            else
+            {
+                return pos;
+            }
         }
 
         // ─────────────────────────────────────────────────────────────────
-        //  ACTION EXECUTION  (stubs)
+        //  ACTION EXECUTION
         // ─────────────────────────────────────────────────────────────────
         private void ExecuteAggroAction()
         {
@@ -342,27 +403,22 @@ namespace MoaiEnemy.src.MoaiPirate
                     FireCannon();
                     break;
                 case AggressiveAction.Grapple:
+                    if (shipHornStealing) { shipHornStealing.Play(); }
                     FireGrapple();
                     break;
                 case AggressiveAction.Lower:
                     InitPhaseLowering();
+                    Debug.Log("Aggressive Action: Lowering Ship...");
                     // MoaiPirateAI handles the rest once landed
                     break;
             }
 
-            // Cannon and non-cruiser grapple return to patrolling immediately after firing.
-            // Cruiser grapple is handled entirely by CruiserGrappleRoutine — don't exit here.
-            // Lower will transition via the landed phase detection in MoaiPirateAI.
+            // Cannon returns to patrolling immediately after firing.
+            // Grapple and Lower manage their own exit (GrappleRoutine / CruiserGrappleRoutine call ExitAggressive at the end).
             if (aggroAction == AggressiveAction.Cannon)
             {
                 ExitAggressive();
             }
-            else if (aggroAction == AggressiveAction.Grapple && aggroCruiser == null)
-            {
-                // Non-cruiser grapple (enemy/scrap) — exit immediately
-                ExitAggressive();
-            }
-            // aggroAction == Lower or cruiser grapple: do NOT call ExitAggressive here
         }
 
         // STUB — replace with real projectile later
@@ -385,136 +441,250 @@ namespace MoaiEnemy.src.MoaiPirate
             }
         }
 
-        // STUB — replace with real grapple animation/projectile later
+        // ─────────────────────────────────────────────────────────────────
+        //  GRAPPLE
+        // ─────────────────────────────────────────────────────────────────
+        public AudioSource grappleFireSound;
+        public AudioSource grappleHitSound;
+        public AudioSource grappleRetractSound;
+        public ShipCableProceduralSimple grappleChain;
+        public static float grappleHoldTime = 2.4f;  // 2.4 seconds of holding
+        public static float grappleTravelSpeed = 8f;
+        public bool isGrappling = false;
+        public GameObject grabbedGO;
+
         private void FireGrapple()
         {
-            Debug.Log("Moai Pirate Ship: [STUB] Firing grappling hook.");
-
+            // Cruiser gets its own dedicated routine — ship physically flees while holding
             if (aggroCruiser != null)
             {
-                // Cruiser grapple: coroutine handles the full sequence
                 StartCoroutine(CruiserGrappleRoutine(aggroCruiser));
-                return;  // do NOT call ExitAggressive here — coroutine does it
+                return;
             }
 
-            // TODO: Animate grapple hook from ship toward target, then poof
+            Transform target = null;
+            if (aggroEnemy != null) target = aggroEnemy.transform;
+            else if (aggroScrap != null) target = aggroScrap.transform;
+
+            if (target == null)
+            {
+                Debug.Log("Moai Pirate Ship: Grapple — no valid target.");
+                ExitAggressive();
+                return;
+            }
+
+            StartCoroutine(GrappleRoutine(target));
+        }
+
+        // ─────────────────────────────────────────────────────────────────
+        //  GRAPPLE ROUTINE  (enemy / scrap)
+        // ─────────────────────────────────────────────────────────────────
+        private IEnumerator GrappleRoutine(Transform target)
+        {
+            if (isGrappling) { yield break; }
+
+            isGrappling = true;
+            actionExecuted = true;
+
+            grappleChain.gameObject.SetActive(true);
+            grappleChain.endPointTransform.position = grappleChain.transform.position;
+            if (grappleFireSound) grappleFireSound.Play();
+
+            // extend toward target
+            while (target != null && Vector3.Distance(grappleChain.endPointTransform.position, target.position) > 0.4f)
+            {
+                grappleChain.endPointTransform.position = Vector3.MoveTowards(
+                    grappleChain.endPointTransform.position, target.position,
+                    grappleTravelSpeed * Time.deltaTime);
+                yield return null;
+            }
+
+            // latch
+            if (grappleHitSound) grappleHitSound.Play();
+
+            // disable components that override transforms so we can drag the object
+            if (target != null && target.gameObject)
+            {
+                grabbedGO = target.gameObject;
+                var GO = target.gameObject;
+                if (GO.GetComponent<EnemyAI>()) { GO.GetComponent<EnemyAI>().enabled = false; }
+                if (GO.GetComponent<NavMeshAgent>()) { GO.GetComponent<NavMeshAgent>().enabled = false; }
+                if (GO.GetComponent<GrabbableObject>()) { GO.GetComponent<GrabbableObject>().enabled = false; }
+            }
+
+            yield return new WaitForSeconds(grappleHoldTime);
+
+            // retract
+            if (grappleRetractSound) grappleRetractSound.Play();
+            Vector3 retractTarget = grappleChain.transform.position;
+            while (Vector3.Distance(grappleChain.endPointTransform.position, retractTarget) > 0.3f)
+            {
+                retractTarget = grappleChain.transform.position;
+                grappleChain.endPointTransform.position = Vector3.MoveTowards(
+                    grappleChain.endPointTransform.position, retractTarget,
+                    grappleTravelSpeed * 1.5f * Time.deltaTime);
+                yield return null;
+            }
+
+            // poof — aggroScrap/aggroEnemy still valid because ExitAggressive hasn't run yet
             if (aggroEnemy != null)
             {
-                Debug.Log($"Moai Pirate Ship: [STUB] Grappling enemy {aggroEnemy.enemyType.enemyName} — poofing.");
                 aggroEnemy.gameObject.SetActive(false);
                 Destroy(aggroEnemy.gameObject, 0.1f);
                 aggroEnemy = null;
             }
             else if (aggroScrap != null)
             {
-                Debug.Log($"Moai Pirate Ship: [STUB] Grappling scrap {aggroScrap.itemProperties.itemName} — poofing.");
                 aggroScrap.gameObject.SetActive(false);
                 Destroy(aggroScrap.gameObject, 0.1f);
                 aggroScrap = null;
             }
+
+            grappleChain.gameObject.SetActive(false);
+            isGrappling = false;
+            grabbedGO = null;
+            ExitAggressive();  // now safe to exit
         }
 
         // ─────────────────────────────────────────────────────────────────
         //  CRUISER GRAPPLE ROUTINE
-        //  Sequence: rise → hold (ship flees players while dragging cruiser)
-        //            → release → retract → exit aggressive
+        //  The ship rises, latches the chain onto the cruiser, then actively
+        //  FLEES away from the nearest player while dragging the cruiser
+        //  with it via physics forces. After the hold time, chain retracts
+        //  and the ship exits aggressive.
         // ─────────────────────────────────────────────────────────────────
+        public static float cruiserGrappleHoldTimeMin = 5f;
+        public static float cruiserGrappleHoldTimeMax = 40f;
+        public static float cruiserFleeSpeed = 8f;       // how far ahead of itself the ship runs while fleeing
+        public static float cruiserFleeSampleRadius = 25f; // NavMesh sample radius when picking flee point
+        public static float cruiserDragForce = 60f;      // force applied to cruiser rigidbody each frame
+
         private IEnumerator CruiserGrappleRoutine(VehicleController cruiser)
         {
+            if (isGrappling) { yield break; }
+
             isGrappling = true;
-            Debug.Log("Moai Pirate Ship: Cruiser grapple — starting sequence.");
+            actionExecuted = true;
 
-            // 1. Rise into the air, pulling the cruiser up via physics force each frame
+            // ── 1. Rise first so the chain angle makes sense ──────────────
             InitPhaseRising();
-            Debug.Log("Moai Pirate Ship: Cruiser grapple — rising.");
 
-            // Wait until rise is complete (yLevel within 1 of targetYLevel)
-            while (Mathf.Abs(yLevel - targetYLevel) >= 1f)
+            // Wait until the ship has actually risen (yLevel close to targetYLevel)
+            while (Mathf.Abs(yLevel - targetYLevel) > 1f)
             {
-                if (cruiser == null || cruiser.carDestroyed)
-                {
-                    Debug.Log("Moai Pirate Ship: Cruiser destroyed during rise — aborting grapple.");
-                    ExitAggressive();
-                    yield break;
-                }
-
-                // Pull cruiser upward during rise
-                Rigidbody rb = cruiser.GetComponent<Rigidbody>();
-                if (rb != null)
-                {
-                    Vector3 toShip = (shipModel.transform.position - cruiser.transform.position);
-                    rb.AddForce(toShip.normalized * 18f, ForceMode.Force);
-                }
-
                 yield return null;
             }
 
-            // 2. Hold phase — random 5–40s, ship actively flees players while dragging cruiser
-            float holdDuration = UnityEngine.Random.Range(5f, 40f);
+            // Lock agent in place while we grapple — we'll drive it manually
+            agent.ResetPath();
+
+            // ── 2. Fire chain toward cruiser ──────────────────────────────
+            grappleChain.gameObject.SetActive(true);
+            grappleChain.endPointTransform.position = grappleChain.transform.position;
+            if (grappleFireSound) grappleFireSound.Play();
+
+            while (cruiser != null && !cruiser.carDestroyed &&
+                   Vector3.Distance(grappleChain.endPointTransform.position, cruiser.transform.position) > 0.8f)
+            {
+                grappleChain.endPointTransform.position = Vector3.MoveTowards(
+                    grappleChain.endPointTransform.position, cruiser.transform.position,
+                    grappleTravelSpeed * Time.deltaTime);
+                yield return null;
+            }
+
+            // latch
+            if (grappleHitSound) grappleHitSound.Play();
+            Debug.Log("Moai Pirate Ship: Cruiser grapple latched — beginning flee.");
+
+            // ── 3. Hold + Flee phase ──────────────────────────────────────
+            // During this phase:
+            //   - ship navigates AWAY from the nearest player each frame
+            //   - cruiser rigidbody is pulled toward the chain endpoint (ship underside)
+            //   - chain endpoint snaps to cruiser transform each frame (visual only via LateUpdate)
+            //   - grabbedGO drives LateUpdate to keep chain tip on the cruiser
+
+            grabbedGO = cruiser.gameObject;   // LateUpdate will keep chain tip on the cruiser
+
+            Rigidbody cruiserRb = cruiser.GetComponent<Rigidbody>();
+
+            float holdDuration = UnityEngine.Random.Range(cruiserGrappleHoldTimeMin, cruiserGrappleHoldTimeMax);
             float holdTimer = 0f;
-            Debug.Log($"Moai Pirate Ship: Cruiser grapple — hold phase for {holdDuration:F1}s, fleeing players.");
 
             while (holdTimer < holdDuration)
             {
+                // Abort if cruiser was destroyed mid-hold
                 if (cruiser == null || cruiser.carDestroyed)
                 {
-                    Debug.Log("Moai Pirate Ship: Cruiser destroyed during hold — aborting grapple.");
-                    ExitAggressive();
-                    yield break;
+                    Debug.Log("Moai Pirate Ship: Cruiser destroyed during grapple hold — releasing.");
+                    break;
                 }
 
                 holdTimer += Time.deltaTime;
 
-                // Find nearest player (XZ only)
-                PlayerControllerB nearest = null;
+                // ── Find nearest living player ────────────────────────────
+                PlayerControllerB nearestPlayer = null;
                 float nearestDist = float.MaxValue;
-                foreach (PlayerControllerB player in FindObjectsOfType<PlayerControllerB>())
+                foreach (PlayerControllerB ply in RoundManager.Instance.playersManager.allPlayerScripts)
                 {
-                    if (player == null || player.isPlayerDead || !player.isPlayerControlled) continue;
-                    float d = Vector3.Distance(transform.position, player.transform.position);
+                    if (ply == null || ply.isPlayerDead || !ply.isPlayerControlled) continue;
+                    float d = Vector3.Distance(transform.position, ply.transform.position);
                     if (d < nearestDist)
                     {
                         nearestDist = d;
-                        nearest = player;
+                        nearestPlayer = ply;
                     }
                 }
 
-                // Navigate ship directly away from nearest player
-                if (nearest != null)
+                // ── Navigate ship away from that player ──────────────────
+                if (nearestPlayer != null)
                 {
-                    Vector3 shipXZ = new Vector3(transform.position.x, 0f, transform.position.z);
-                    Vector3 playerXZ = new Vector3(nearest.transform.position.x, 0f, nearest.transform.position.z);
-                    Vector3 fleeDir = (shipXZ - playerXZ).normalized;
-                    Vector3 fleeDest = transform.position + fleeDir * 30f;
-                    agent.SetDestination(fleeDest);
+                    // Direction directly away from player (XZ only — NavAgent stays on mesh)
+                    Vector3 awayDir = (transform.position - nearestPlayer.transform.position);
+                    awayDir.y = 0f;
+                    awayDir.Normalize();
+
+                    Vector3 fleeTarget = transform.position + awayDir * cruiserFleeSpeed;
+
+                    // Sample a valid NavMesh point near the flee target
+                    if (NavMesh.SamplePosition(fleeTarget, out NavMeshHit hit, cruiserFleeSampleRadius, NavMesh.AllAreas))
+                    {
+                        agent.SetDestination(hit.position);
+                    }
                 }
 
-                // Keep dragging cruiser toward ship each frame during hold
-                Rigidbody crb = cruiser.GetComponent<Rigidbody>();
-                if (crb != null)
+                // ── Pull cruiser rigidbody toward chain endpoint (ship underside) ──
+                if (cruiserRb != null)
                 {
-                    Vector3 toCruiserTarget = (shipModel.transform.position - cruiser.transform.position);
-                    crb.AddForce(toCruiserTarget.normalized * 12f, ForceMode.Force);
+                    Vector3 pullDir = (grappleChain.transform.position - cruiser.transform.position).normalized;
+                    cruiserRb.AddForce(pullDir * cruiserDragForce, ForceMode.Force);
                 }
 
                 yield return null;
             }
 
-            // 3. Release — stop applying forces, let cruiser fall
-            Debug.Log("Moai Pirate Ship: Cruiser grapple — releasing cruiser.");
-            // (forces stop naturally since we're no longer in the loop)
+            // ── 4. Release — retract chain ────────────────────────────────
+            agent.ResetPath();   // stop fleeing
+            grabbedGO = null;
 
-            // Brief pause so the cruiser can separate cleanly
-            yield return new WaitForSeconds(0.5f);
+            if (grappleRetractSound) grappleRetractSound.Play();
+            Debug.Log("Moai Pirate Ship: Releasing cruiser — retracting chain.");
 
-            // 4. Retract chain (visual only for now — TODO: animate chain retraction)
-            Debug.Log("Moai Pirate Ship: Cruiser grapple — retracting chain.");
-            yield return new WaitForSeconds(1.5f);
+            Vector3 retractTarget = grappleChain.transform.position;
+            while (Vector3.Distance(grappleChain.endPointTransform.position, retractTarget) > 0.3f)
+            {
+                retractTarget = grappleChain.transform.position;
+                grappleChain.endPointTransform.position = Vector3.MoveTowards(
+                    grappleChain.endPointTransform.position, retractTarget,
+                    grappleTravelSpeed * 1.5f * Time.deltaTime);
+                yield return null;
+            }
 
-            // 5. Done — back to patrol
-            Debug.Log("Moai Pirate Ship: Cruiser grapple — sequence complete.");
+            grappleChain.gameObject.SetActive(false);
+            isGrappling = false;
+            aggroCruiser = null;
             ExitAggressive();
         }
+
 
         private void ExitAggressive()
         {
@@ -522,7 +692,6 @@ namespace MoaiEnemy.src.MoaiPirate
             aggroEnemy = null;
             aggroScrap = null;
             aggroCruiser = null;
-            isGrappling = false;
             actionExecuted = false;
             rescoreTimer = 0f;
             InitPhaseTraveling(Vector3.zero);
@@ -540,6 +709,7 @@ namespace MoaiEnemy.src.MoaiPirate
         public static float highestHeight = 25f;
         public void InitPhaseRising()
         {
+            if (shipTakingOffSound) { shipTakingOffSound.Play(); }
             phase = "rising";
             targetYLevel = transform.position.y + UnityEngine.Random.Range(lowestHeight, highestHeight);
             Debug.Log("Moai Pirate Ship: rising to height of: " + targetYLevel);
@@ -548,12 +718,12 @@ namespace MoaiEnemy.src.MoaiPirate
         public void InitPhaseLowering()
         {
             phase = "lowering";
-            Physics.Raycast(shipModel.transform.position, Vector3.down, out RaycastHit hitInfo, 500f,
-                LayerMask.GetMask("Default", "Room", "Terrain", "Colliders"));
+            var validHit = NavMesh.SamplePosition(transform.position, out NavMeshHit hit, 30f, NavMesh.AllAreas);
 
-            if (hitInfo.collider != null)
+            if (validHit)
             {
-                targetYLevel = hitInfo.point.y;
+                targetYLevel = hit.position.y;
+                if (landingBell) { landingBell.Play(); }
             }
             else
             {
@@ -580,8 +750,12 @@ namespace MoaiEnemy.src.MoaiPirate
             agent.SetDestination(destination);
         }
 
+        // the ship will go through a phase where it targets enemies through a scoring 
+        // system. Then it will select the highest scoring target, executing a specific action
+        // based on rng.
         public void InitPhaseAggressive()
         {
+            if (shipHornThreaten) { shipHornThreaten.Play(); }
             phase = "aggressive";
             rescoreTimer = 0f;   // score immediately on first update
             actionExecuted = false;
@@ -589,7 +763,6 @@ namespace MoaiEnemy.src.MoaiPirate
             aggroEnemy = null;
             aggroScrap = null;
             aggroCruiser = null;
-            isGrappling = false;
         }
 
         [ClientRpc]
