@@ -91,6 +91,9 @@ namespace MoaiEnemy.src.MoaiNormal
         }
         
         bool notifiedClientsOfShip = false;
+        float randomVoicelineTimer = 4f;
+        public static float voicelineDelayLower = 1f;
+        public static float voicelineDelayUpper= 16f;
         public override void Update()
         {
             base.Update();
@@ -141,6 +144,19 @@ namespace MoaiEnemy.src.MoaiNormal
                 transform.position = ship.WheelPoint.transform.position;
                 transform.rotation = ship.WheelPoint.transform.rotation;
             }
+
+            // Shotgun fire logic
+            if(currentBehaviourStateIndex == (int)State.StickingInFrontOfPlayer)
+            {
+                UpdateBurstFire();
+            }
+
+            randomVoicelineTimer -= Time.deltaTime;
+            if(randomVoicelineTimer <= 0)
+            {
+                PlayRandomPirateVoiceline();
+                randomVoicelineTimer = UnityEngine.Random.Range(voicelineDelayLower, voicelineDelayUpper);
+            }
         }
 
         public void PlayRandomPirateVoiceline()
@@ -156,10 +172,11 @@ namespace MoaiEnemy.src.MoaiNormal
         public Animator ShotgunAnimator;
         public AudioSource[] PirateVoicelines;  // randomly played
         public AudioSource ShotgunPrepareSound;
-        public AudioSource ShotgunReloadSound;
+        public AudioSource ShotgunReloadSound;  // currently unused
         public IEnumerator FireShotgun()
         {
             if(firingGun) { yield break; }
+            firingGun = true;
 
             // first yell out a warning!
             PlayRandomPirateVoiceline();
@@ -186,6 +203,37 @@ namespace MoaiEnemy.src.MoaiNormal
             }
 
             firingGun = false;
+        }
+
+        // ── Burst fire ────────────────────────────────────────────────────
+        public static int burstShotsMin = 2;
+        public static int burstShotsMax = 4;
+        public static float burstInterval = 1.8f;   // time between shots in a burst
+        public static float burstCooldownMin = 4f;
+        public static float burstCooldownMax = 11f;
+
+        private float burstCooldownTimer = 0f;
+
+        public void UpdateBurstFire()
+        {
+            if (firingGun) return;
+
+            burstCooldownTimer -= Time.deltaTime;
+            if (burstCooldownTimer <= 0f)
+            {
+                burstCooldownTimer = UnityEngine.Random.Range(burstCooldownMin, burstCooldownMax);
+                StartCoroutine(BurstFireRoutine());
+            }
+        }
+
+        private IEnumerator BurstFireRoutine()
+        {
+            int shots = UnityEngine.Random.Range(burstShotsMin, burstShotsMax + 1);
+            for (int i = 0; i < shots; i++)
+            {
+                StartCoroutine(FireShotgun());
+                yield return new WaitForSeconds(burstInterval);
+            }
         }
 
         [ClientRpc]

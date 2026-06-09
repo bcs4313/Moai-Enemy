@@ -959,7 +959,7 @@ namespace MoaiEnemy.src.MoaiNormal
                     if (Vector3.Distance(transform.position, obj.transform.position) < 20.0f && !obj.heldByPlayerOnServer && !obj.isInShipRoom && !unreachableItems.Contains(obj))
                     {
                         //Debug.Log("MOAI: Returning object -> " + obj.name);
-                        if (!obj.name.ToLower().Contains("gold"))
+                        if (!obj.name.ToLower().Contains("gold") && !obj.name.ToLower().Contains("quantum") && !obj.name.ToLower().Contains("shotgun"))
                         {
                             itemList.Add(obj);
                         }

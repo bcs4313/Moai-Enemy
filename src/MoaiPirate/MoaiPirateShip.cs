@@ -611,7 +611,11 @@ namespace MoaiEnemy.src.MoaiPirate
                 var GO = target.gameObject;
                 if (GO.GetComponent<EnemyAI>()) { GO.GetComponent<EnemyAI>().enabled = false; }
                 if (GO.GetComponent<NavMeshAgent>()) { GO.GetComponent<NavMeshAgent>().enabled = false; }
-                if (GO.GetComponent<GrabbableObject>()) { GO.GetComponent<GrabbableObject>().enabled = false; }
+                if (GO.GetComponent<GrabbableObject>()) 
+                {
+                    if (VoiceThereBeTreasure) { VoiceThereBeTreasure.Play(); }
+                    GO.GetComponent<GrabbableObject>().enabled = false; 
+                }
             }
 
             yield return new WaitForSeconds(grappleHoldTime);
@@ -655,6 +659,7 @@ namespace MoaiEnemy.src.MoaiPirate
         //  with it via physics forces. After the hold time, chain retracts
         //  and the ship exits aggressive.
         // ─────────────────────────────────────────────────────────────────
+        public AudioSource VoiceThereBeTreasure; // lol
         public static float cruiserGrappleHoldTimeMin = 5f;
         public static float cruiserGrappleHoldTimeMax = 30f;
         public static float cruiserFleeSpeed = 8f;       // how far ahead of itself the ship runs while fleeing
@@ -681,6 +686,7 @@ namespace MoaiEnemy.src.MoaiPirate
             agent.ResetPath();
 
             // ── 2. Fire chain toward cruiser ──────────────────────────────
+            if(VoiceThereBeTreasure) { VoiceThereBeTreasure.Play(); }
             grappleChain.gameObject.SetActive(true);
             grappleChain.endPointTransform.position = grappleChain.transform.position;
             if (grappleFireSound) grappleFireSound.Play();
@@ -706,7 +712,10 @@ namespace MoaiEnemy.src.MoaiPirate
             //   - cruiser rigidbody is pulled toward the chain endpoint (ship underside)
             //   - chain endpoint snaps to cruiser transform each frame (visual only via LateUpdate)
             //   - grabbedGO drives LateUpdate to keep chain tip on the cruiser
-
+            if (captain) 
+            { 
+                captain.PlayRandomPirateVoiceline(); 
+            }
             grabbedGO = cruiser.gameObject;   // LateUpdate will keep chain tip on the cruiser
 
             Rigidbody cruiserRb = cruiser.GetComponent<Rigidbody>();
