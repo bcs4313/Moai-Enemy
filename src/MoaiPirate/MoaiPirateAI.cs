@@ -10,6 +10,8 @@ using System.Reflection;
 using MoaiEnemy;
 using LethalLib.Modules;
 using MoaiEnemy.src.MoaiPirate;
+using System.Collections;
+using System.Threading.Tasks;
 
 namespace MoaiEnemy.src.MoaiNormal
 {
@@ -42,15 +44,52 @@ namespace MoaiEnemy.src.MoaiNormal
 
             if (RoundManager.Instance.IsHost)
             {
+                // ship setup
                 NavMesh.SamplePosition(transform.position, out NavMeshHit hit, 20f, NavMesh.AllAreas);
                 GameObject GO = Instantiate(Plugin.PirateShip, hit.position, transform.rotation);
                 GO.transform.localScale = transform.localScale;
                 GO.GetComponent<NetworkObject>().Spawn();
                 ship = GO.GetComponent<MoaiPirateShip>();
+
+                // weapon setup
+                SetupInvisShotgun();
             }
             goodBoy = -1;
         }
 
+        // the moai has a blunderbuss that it operates.
+        // The blunderbuss is an invisible item that attaches to a transform on the moai
+        public Transform shotgunMount;
+        private ShotgunItem mountedShotgun;
+        public void SetupInvisShotgun()
+        {
+            // find the shotgun item
+            var itemList = Resources.FindObjectsOfTypeAll<Item>();
+            foreach(var item in itemList)
+            {
+                if (item.itemName.ToLower().Contains("shotgun") && item.spawnPrefab.GetComponent<ShotgunItem>())
+                {
+                    Debug.Log("Moai Pirate: Found shotgun prefab to mount to blunderbuss model. spawning... " + item.itemName);
+                    var prefab = item.spawnPrefab;
+                    var spawnedShotgun = UnityEngine.GameObject.Instantiate(prefab, transform.position, transform.rotation);
+                    mountedShotgun = spawnedShotgun.GetComponent<ShotgunItem>();
+                    spawnedShotgun.GetComponent<NetworkObject>().Spawn();
+
+                    if (mountedShotgun.TryGetComponent<Rigidbody>(out var rb))
+                    {
+                        rb.isKinematic = true;
+                    }
+                    mountedShotgun.isHeld = true;
+                    mountedShotgun.isHeldByEnemy = this;
+                    mountedShotgun.hasHitGround = true;
+                    mountedShotgun.reachedFloorTarget = true;
+                    mountedShotgun.scrapValue = 0;
+                    return;
+                }
+            }
+            Debug.LogError("Moai Pirate: failed to find shotgun prefab to use as blunderbuss. Blunderbuss will not fire!");
+        }
+        
         bool notifiedClientsOfShip = false;
         public override void Update()
         {
@@ -69,6 +108,12 @@ namespace MoaiEnemy.src.MoaiNormal
                     if (triggerLinkGameObject.activeInHierarchy)
                         triggerLinkDisableClientRpc();
                 }
+            }
+
+            if(mountedShotgun)
+            {
+                mountedShotgun.gameObject.transform.position = shotgunMount.transform.position;
+                mountedShotgun.gameObject.transform.rotation = shotgunMount.transform.rotation;
             }
 
             switch (currentBehaviourStateIndex)
@@ -98,6 +143,51 @@ namespace MoaiEnemy.src.MoaiNormal
             }
         }
 
+        public void PlayRandomPirateVoiceline()
+        {
+            if(PirateVoicelines != null && PirateVoicelines.Length > 0)
+            {
+                PirateVoicelines[UnityEngine.Random.Range(0, PirateVoicelines.Length)].Play();
+            }
+        }
+
+        // shotgun fire feature
+        bool firingGun = false;
+        public Animator ShotgunAnimator;
+        public AudioSource[] PirateVoicelines;  // randomly played
+        public AudioSource ShotgunPrepareSound;
+        public AudioSource ShotgunReloadSound;
+        public IEnumerator FireShotgun()
+        {
+            if(firingGun) { yield break; }
+
+            // first yell out a warning!
+            PlayRandomPirateVoiceline();
+            yield return new WaitForSeconds(0.5f);  // half second before cocking gun
+            if (ShotgunPrepareSound) { ShotgunPrepareSound.Play(); }  // play cocking sound. Yes this is nonsensical
+
+            // reload and fire animation (state transitions handle this, intentionally backwards)
+            ShotgunAnimator.Play("Reload");  // transitions to firing anim
+            while (!animator.GetCurrentAnimatorStateInfo(0).IsName("Fire"))
+            {
+                yield return null;
+            }
+
+            // now that we are in the fire animation, actually fire the gun
+            mountedShotgun.shellsLoaded = 2;
+            mountedShotgun.isReloading = false;
+            mountedShotgun.safetyOn = false;
+            mountedShotgun.ShootGunAndSync(false);
+
+            // wait for idle
+            while (!animator.GetCurrentAnimatorStateInfo(0).IsName("ShotgunIdle"))
+            {
+                yield return null;
+            }
+
+            firingGun = false;
+        }
+
         [ClientRpc]
         public void triggerLinkEnableClientRpc()
         {
@@ -120,6 +210,7 @@ namespace MoaiEnemy.src.MoaiNormal
             base.DoAIInterval();
             baseAIInterval();
 
+            if (transform.localScale.y > 2.1f) { transform.localScale = new Vector3(2, 2, 2); } // can't be scaled to be larger, very buggy otherwise
             agent.acceleration = 8 * moaiGlobalSpeed.Value;
 
             switch (currentBehaviourStateIndex)

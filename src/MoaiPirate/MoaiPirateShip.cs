@@ -78,6 +78,7 @@ namespace MoaiEnemy.src.MoaiPirate
         void Start()
         {
             yLevel = transform.position.y;
+            if (transform.localScale.y > 2.1f) { transform.localScale = new Vector3(2, 2, 2); } // can't be scaled to be larger, very buggy otherwise
             targetYLevel = transform.position.y;
             grappleChain.gameObject.SetActive(false);
         }
@@ -90,6 +91,7 @@ namespace MoaiEnemy.src.MoaiPirate
             if (captain == null) { return; }
             if (!RoundManager.Instance.IsHost) { return; }
 
+            if (transform.localScale.y > 2.1f) { transform.localScale = new Vector3(2, 2, 2); } // can't be scaled to be larger, very buggy otherwise
             switch (phase)
             {
                 case "landed":
@@ -135,7 +137,7 @@ namespace MoaiEnemy.src.MoaiPirate
             shipModel.transform.position = new Vector3(transform.position.x, transform.position.y + yLevel, transform.position.z);
 
             // agent speeds
-            if(isGrappling)
+            if(isGrappling || aggroCruiser)
             {
                 agent.speed = speedWhenGrappling;
             }
@@ -777,7 +779,7 @@ namespace MoaiEnemy.src.MoaiPirate
                 retractTarget = grappleChain.transform.position;
                 grappleChain.endPointTransform.position = Vector3.MoveTowards(
                     grappleChain.endPointTransform.position, retractTarget,
-                    grappleTravelSpeed * 1.5f * Time.deltaTime);
+                    grappleTravelSpeed * 1.5f + cruiser.speed * Time.deltaTime);
                 yield return null;
             }
 
@@ -792,12 +794,10 @@ namespace MoaiEnemy.src.MoaiPirate
         private Vector3 chainSimTarget = Vector3.zero;
         private Vector3 chainSimCurrent = Vector3.zero;
         private float chainSwingTimer = 0f;
-        public static float chainSwingInterval = 0.6f;   // how often it picks a new random target
-        public static float chainSwingRadius = 3f;        // max XZ wander radius
-        public static float chainSwingEase = 4f;          // lerp speed toward new target
-        public static float chainHangDepth = 6f;          // how far below the ship it hangs
-
-
+        public static float chainSwingInterval = 0.2f;   // how often it picks a new random target
+        public static float chainSwingRadius = 13f;        // max XZ wander radius
+        public static float chainSwingEase = 2f;          // lerp speed toward new target
+        public static float chainHangDepth = 12f;          // how far below the ship it hangs
 
         private void ExitAggressive()
         {
