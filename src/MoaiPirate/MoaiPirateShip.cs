@@ -529,23 +529,18 @@ namespace MoaiEnemy.src.MoaiPirate
         }
 
         // STUB — replace with real projectile later
+        public Transform[] cannonFirePoints;
         private void FireCannon()
         {
             Vector3 targetPos = GetTargetPosition();
             Debug.Log($"Moai Pirate Ship: [STUB] Firing cannon at {targetPos}");
 
-            // TODO: Instantiate cannon ball projectile from Bow transform, aimed at targetPos
-            // For now, deal direct damage if target is a player
-            if (aggroPlayer != null)
-            {
-                aggroPlayer.DamagePlayer(30, true, true, CauseOfDeath.Blast);
-                Debug.Log("Moai Pirate Ship: [STUB] Cannon hit player for 30 damage.");
-            }
-            else if (aggroEnemy != null)
-            {
-                aggroEnemy.HitEnemy(2, null, true);
-                Debug.Log("Moai Pirate Ship: [STUB] Cannon hit enemy for 2 hits.");
-            }
+            // TODO: Instantiate the a cannon ball fire from a cannon that is currently available
+            // only fire from a cannon that points towards the aggro target. This is valid for cannon balls that are on the "correct side"
+            // of the ship. There is 1 front cannon, and 6 side cannons, 3 per side. Using y-angled cone based validation is probably the best approach.
+            GameObject gameObject = UnityEngine.Object.Instantiate(Plugin.plasmaProjectile, (cannonFirePoints[0].transform.position + transform.forward * 2), spawnRotation?);  
+            gameObject.SetActive(value: true);
+            gameObject.GetComponent<NetworkObject>().Spawn();
         }
 
         // ─────────────────────────────────────────────────────────────────

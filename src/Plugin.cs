@@ -65,6 +65,7 @@ namespace MoaiEnemy
         public static TerminalNode MoaiPirateTerminalNode;
         public static TerminalKeyword MoaiPirateTerminalKeyword;
         public static GameObject PirateShip;
+        public static GameObject CannonProjectile;
 
         public static EnemyType SoulDevourer;
         public static TerminalNode SoulDevourerTerminalNode;
@@ -140,6 +141,7 @@ namespace MoaiEnemy
             MoaiPirateTerminalNode = Assets.MainAssetBundle.LoadAsset<TerminalNode>("MoaiPirateTN");
             MoaiPirateTerminalKeyword = Assets.MainAssetBundle.LoadAsset<TerminalKeyword>("MoaiPirateTK");
             PirateShip = Assets.MainAssetBundle.LoadAsset<GameObject>("MoaiEnemyShip");
+            CannonProjectile = Assets.MainAssetBundle.LoadAsset<GameObject>("CannonBall");
 
             SoulDevourer = Assets.MainAssetBundle.LoadAsset<EnemyType>("SoulDev");
             SoulDevourerTerminalNode = Assets.MainAssetBundle.LoadAsset<TerminalNode>("SoulDevTN");
@@ -170,6 +172,7 @@ namespace MoaiEnemy
             NetworkPrefabs.RegisterNetworkPrefab(consumptionCircle);
             NetworkPrefabs.RegisterNetworkPrefab(PlasmaPad);
             NetworkPrefabs.RegisterNetworkPrefab(PirateShip);
+            NetworkPrefabs.RegisterNetworkPrefab(CannonProjectile);
 
             // rarity range is 0-100 normally
             rawSpawnMultiplier = RawspawnHandler.getSpawnMultiplier();
