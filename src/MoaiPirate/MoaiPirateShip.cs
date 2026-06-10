@@ -84,6 +84,7 @@ namespace MoaiEnemy.src.MoaiPirate
         }
 
         float baseSpeed = 3.2f;
+        float speedWhenAggressive = 5.9f;
         float speedWhenGrappling = 6.2f;
         public static float cruiserGrappleAscensionSpeed = 2f;
         public void Update()
@@ -140,6 +141,10 @@ namespace MoaiEnemy.src.MoaiPirate
             if(isGrappling || aggroCruiser)
             {
                 agent.speed = speedWhenGrappling;
+            }
+            else if(aggroPlayer)
+            {
+                agent.speed = speedWhenAggressive;
             }
             else
             {
@@ -831,6 +836,7 @@ namespace MoaiEnemy.src.MoaiPirate
         public static float highestHeight = 25f;
         public void InitPhaseRising()
         {
+            captain.PlayRandomPirateVoiceline();
             if (shipTakingOffSound) { shipTakingOffSound.Play(); }
             phase = "rising";
             targetYLevel = transform.position.y + UnityEngine.Random.Range(lowestHeight, highestHeight);
@@ -839,6 +845,7 @@ namespace MoaiEnemy.src.MoaiPirate
 
         public void InitPhaseLowering()
         {
+            captain.PlayRandomPirateVoiceline();
             phase = "lowering";
             var validHit = NavMesh.SamplePosition(transform.position, out NavMeshHit hit, 30f, NavMesh.AllAreas);
 

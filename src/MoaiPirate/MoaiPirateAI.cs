@@ -185,10 +185,8 @@ namespace MoaiEnemy.src.MoaiNormal
 
             // reload and fire animation (state transitions handle this, intentionally backwards)
             ShotgunAnimator.Play("Reload");  // transitions to firing anim
-            while (!animator.GetCurrentAnimatorStateInfo(0).IsName("Fire"))
-            {
-                yield return null;
-            }
+            yield return new WaitForSeconds(1.14f);
+            ShotgunAnimator.Play("Fire");  // transitions to firing anim
 
             // now that we are in the fire animation, actually fire the gun
             mountedShotgun.shellsLoaded = 2;
@@ -196,11 +194,7 @@ namespace MoaiEnemy.src.MoaiNormal
             mountedShotgun.safetyOn = false;
             mountedShotgun.ShootGunAndSync(false);
 
-            // wait for idle
-            while (!animator.GetCurrentAnimatorStateInfo(0).IsName("ShotgunIdle"))
-            {
-                yield return null;
-            }
+            yield return new WaitForSeconds(0.3f);
 
             firingGun = false;
         }
@@ -268,7 +262,7 @@ namespace MoaiEnemy.src.MoaiNormal
 
                     if (timeLeftPatrollingOffShip <= 0)
                     {
-                        timeLeftPatrollingOffShip = UnityEngine.Random.Range(5f, 20f);
+                        timeLeftPatrollingOffShip = UnityEngine.Random.Range(10f, 35f);
                         SwitchToBehaviourClientRpc((int)State.HeadingToShip);
                         targetPlayer = null;
                         SetDestinationToPosition(GetWheelDestination());
