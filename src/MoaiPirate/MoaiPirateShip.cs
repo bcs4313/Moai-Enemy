@@ -60,9 +60,15 @@ namespace MoaiEnemy.src.MoaiPirate
 
         private float rescoreTimer = 0f;
         private const float RESCORE_INTERVAL = 3f;
-        private static float ARRIVAL_DIST = 12f;       // XZ distance to consider "arrived" at target
+        private static float ARRIVAL_DIST = 22f;       // XZ distance to consider "arrived" at target
         private static float LAND_DIST = 6f;           // XZ distance to consider "landable" at target
         private const float MIN_ENEMY_SCORE = 20f;
+
+        // ── Cannon strafe state ───────────────────────────────────────────
+        public static float strafeDistance = 15f;       // how far perpendicular the ship moves before broadside
+        public static float cannonArrivalDist = 8f;     // XZ dist to consider "arrived" at strafe position
+        public static float cannonMaxAimAngle = 60f;    // max degrees a cannon barrel can deviate to still fire
+        private bool isCannonStrafing = false;          // prevents double-starting the cannon coroutine
 
         // stubs fire state
         private bool actionExecuted = false;
@@ -138,11 +144,11 @@ namespace MoaiEnemy.src.MoaiPirate
             shipModel.transform.position = new Vector3(transform.position.x, transform.position.y + yLevel, transform.position.z);
 
             // agent speeds
-            if(isGrappling || aggroCruiser)
+            if (isGrappling || aggroCruiser)
             {
                 agent.speed = speedWhenGrappling;
             }
-            else if(aggroPlayer)
+            else if (aggroPlayer)
             {
                 agent.speed = speedWhenAggressive;
             }
@@ -151,7 +157,7 @@ namespace MoaiEnemy.src.MoaiPirate
                 agent.speed = baseSpeed;
             }
 
-            if(grapplingCruiser)
+            if (grapplingCruiser)
             {
                 targetYLevel += cruiserGrappleAscensionSpeed * Time.deltaTime;
             }
@@ -216,23 +222,26 @@ namespace MoaiEnemy.src.MoaiPirate
                 return;
             }
 
-            // Navigate toward target
-            Vector3 targetPos = GetTargetPosition();
-            agent.SetDestination(targetPos);
-
-            // Check XZ arrival
-            Vector3 shipXZ = new Vector3(transform.position.x, 0, transform.position.z);
-            Vector3 targetXZ = new Vector3(targetPos.x, 0, targetPos.z);
-            bool arrived = Vector3.Distance(shipXZ, targetXZ) < ARRIVAL_DIST;
-
-            if (arrived && !actionExecuted)
+            // Navigate toward target — skip if cannon coroutine is managing its own pathing
+            if (!isCannonStrafing)
             {
-                ExecuteAggroAction();
+                Vector3 targetPos = GetTargetPosition();
+                agent.SetDestination(targetPos);
+
+                // Check XZ arrival
+                Vector3 shipXZ = new Vector3(transform.position.x, 0, transform.position.z);
+                Vector3 targetXZ = new Vector3(targetPos.x, 0, targetPos.z);
+                bool arrived = Vector3.Distance(shipXZ, targetXZ) < ARRIVAL_DIST;
+
+                if (arrived && !actionExecuted)
+                {
+                    ExecuteAggroAction();
+                }
             }
         }
 
 
-        public static float fireCannonOverLoweringChance = 0.80f;  // 80% = avg of 5 shots before lowering
+        public static float fireCannonOverLoweringChance = 0.7f;  // 66%
         // ─────────────────────────────────────────────────────────────────
         //  SCORING
         // ─────────────────────────────────────────────────────────────────
@@ -272,7 +281,7 @@ namespace MoaiEnemy.src.MoaiPirate
                     bestScrap = null;
                     bestCruiser = null;
                     // 85/15: cannon or lower
-                    bestAction = (UnityEngine.Random.value < fireCannonOverLoweringChance && dist <= LAND_DIST) ? AggressiveAction.Cannon : AggressiveAction.Lower;
+                    bestAction = (UnityEngine.Random.value < fireCannonOverLoweringChance) ? AggressiveAction.Cannon : AggressiveAction.Lower;
                 }
             }
 
@@ -451,7 +460,7 @@ namespace MoaiEnemy.src.MoaiPirate
                 return aggroCruiser.transform.position; // fallback
             }
 
-            if(pos == Vector3.zero)
+            if (pos == Vector3.zero)
             {
                 Debug.LogError("Moai Pirate Ship Error: no target available to set destination. This error should not be thrown!");
             }
@@ -464,7 +473,7 @@ namespace MoaiEnemy.src.MoaiPirate
 
             bool result = NavMesh.SamplePosition(pos, out NavMeshHit hit, 15f, filter);
 
-            if(result)
+            if (result)
             {
                 return hit.position;
             }
@@ -478,7 +487,7 @@ namespace MoaiEnemy.src.MoaiPirate
         {
             GameObject bestGO = null;
             float bestDist = 999999f;
-            foreach(GameObject GO in RoundManager.Instance.outsideAINodes)
+            foreach (GameObject GO in RoundManager.Instance.outsideAINodes)
             {
                 var dist = Vector3.Distance(GO.transform.position, pos);
                 if (Vector3.Distance(GO.transform.position, pos) < bestDist)
@@ -520,27 +529,155 @@ namespace MoaiEnemy.src.MoaiPirate
                     break;
             }
 
-            // Cannon returns to patrolling immediately after firing.
-            // Grapple and Lower manage their own exit (GrappleRoutine / CruiserGrappleRoutine call ExitAggressive at the end).
-            if (aggroAction == AggressiveAction.Cannon)
-            {
-                ExitAggressive();
-            }
+            // Cannon exit is managed by CannonAttackRoutine.
+            // Grapple and Lower manage their own exit via their routines.
         }
 
-        // STUB — replace with real projectile later
         public Transform[] cannonFirePoints;
+        // index 0       = front cannon
+        // index 1–3     = port (left) cannons
+        // index 4–6     = starboard (right) cannons
+
         private void FireCannon()
         {
-            Vector3 targetPos = GetTargetPosition();
-            Debug.Log($"Moai Pirate Ship: [STUB] Firing cannon at {targetPos}");
+            if (isCannonStrafing) return;
+            StartCoroutine(CannonAttackRoutine());
+        }
 
-            // TODO: Instantiate the a cannon ball fire from a cannon that is currently available
-            // only fire from a cannon that points towards the aggro target. This is valid for cannon balls that are on the "correct side"
-            // of the ship. There is 1 front cannon, and 6 side cannons, 3 per side. Using y-angled cone based validation is probably the best approach.
-            GameObject gameObject = UnityEngine.Object.Instantiate(Plugin.plasmaProjectile, (cannonFirePoints[0].transform.position + transform.forward * 2), spawnRotation?);  
-            gameObject.SetActive(value: true);
-            gameObject.GetComponent<NetworkObject>().Spawn();
+        // ─────────────────────────────────────────────────────────────────
+        //  CANNON ATTACK ROUTINE  (probabilistic strafe → broadside → reposition)
+        // ─────────────────────────────────────────────────────────────────3
+        public float ExitAggressiveChanceIncrease = 0.2f;
+        public float ExitAggressiveChance = 0f;
+        private IEnumerator CannonAttackRoutine()
+        {
+            if (isCannonStrafing) yield break;
+            isCannonStrafing = true;
+
+            Vector3 targetPos = GetTargetPosition();
+
+            // ── 1. Pick a strafe side ─────────────────────────────────────
+            // 70% chance to pick the side the target is already on (natural broadside),
+            // 30% chance to flip to the opposite side (forces a crossing maneuver).
+            Vector3 toTarget = (targetPos - transform.position);
+            toTarget.y = 0f;
+            float dotRight = Vector3.Dot(toTarget.normalized, transform.right);
+            bool targetOnRight = dotRight >= 0f;
+
+            bool strafeRight = (UnityEngine.Random.value < 0.7f) ? targetOnRight : !targetOnRight;
+            Vector3 strafeDir = strafeRight ? transform.right : -transform.right;
+
+            // Strafe destination: perpendicular offset from our current XZ position
+            Vector3 strafeDestXZ = transform.position + strafeDir * strafeDistance;
+            strafeDestXZ.y = transform.position.y;
+
+            // Sample onto NavMesh
+            Vector3 strafeNavDest = strafeDestXZ;
+            if (NavMesh.SamplePosition(strafeDestXZ, out NavMeshHit strafeHit, strafeDistance * 0.8f, NavMesh.AllAreas))
+                strafeNavDest = strafeHit.position;
+
+            Debug.Log($"Moai Pirate Ship: Cannon strafe — moving {(strafeRight ? "starboard" : "port")}, dest={strafeNavDest}");
+
+            // ── 2. Navigate to strafe position ────────────────────────────
+            agent.SetDestination(strafeNavDest);
+
+            float strafeTimeout = 6f;
+            float strafeTimer = 0f;
+            while (strafeTimer < strafeTimeout)
+            {
+                strafeTimer += Time.deltaTime;
+
+                Vector3 shipXZ = new Vector3(transform.position.x, 0f, transform.position.z);
+                Vector3 destXZ = new Vector3(strafeNavDest.x, 0f, strafeNavDest.z);
+                if (Vector3.Distance(shipXZ, destXZ) < cannonArrivalDist)
+                    break;
+
+                yield return null;
+            }
+
+            // ── 3. Fire all valid cannons ─────────────────────────────────
+            // Refresh target pos (target may have moved)
+            targetPos = GetTargetPosition();
+            int shotsFired = 0;
+
+            for (int i = 0; i < cannonFirePoints.Length; i++)
+            {
+                Transform firePoint = cannonFirePoints[i];
+                if (firePoint == null) continue;
+
+                // Direction from this cannon to target (flat)
+                Vector3 dirToTarget = (targetPos - firePoint.position).normalized;
+
+                // Angle between the cannon's natural forward and the direction to target
+                Vector3 cannonForwardXZ = new Vector3(firePoint.forward.x, 0f, firePoint.forward.z).normalized;
+                Vector3 dirToTargetXZ = new Vector3(dirToTarget.x, 0f, dirToTarget.z).normalized;
+                float angle = Vector3.Angle(cannonForwardXZ, dirToTargetXZ);
+                if (angle > cannonMaxAimAngle)
+                {
+                    Debug.Log($"Moai Pirate Ship: Cannon [{i}] skipped — Y-axis angle {angle:F1}° exceeds {cannonMaxAimAngle}°");
+                    continue;
+                }
+
+                // Aim rotation: look at target, clamped to cannonMaxAimAngle from barrel forward
+                Quaternion aimRot = Quaternion.LookRotation(dirToTarget);
+
+                GameObject ball = UnityEngine.Object.Instantiate(
+                    Plugin.CannonProjectile,
+                    firePoint.position + firePoint.forward * 0.5f,
+                    aimRot);
+                ball.SetActive(true);
+                float scale = transform.localScale.y / 4;
+                ball.transform.localScale = new Vector3(scale, scale, scale);
+                ball.GetComponent<NetworkObject>().Spawn();
+
+                shotsFired++;
+                Debug.Log($"Moai Pirate Ship: Cannon [{i}] fired — angle={angle:F1}°");
+
+                // Small stagger between cannons on the same broadside for visual effect
+                yield return new WaitForSeconds(0.12f);
+            }
+
+            Debug.Log($"Moai Pirate Ship: Broadside complete — {shotsFired} cannon(s) fired.");
+
+            // ── 4. Re-roll: strafe to opposite side or reposition ─────────
+            // 50% flip to the other side, 50% just break off and reposition
+            bool flipSide = UnityEngine.Random.value < 0.5f;
+
+            if (flipSide)
+            {
+                // Navigate to the opposite broadside position
+                Vector3 flipDir = strafeRight ? -transform.right : transform.right;
+                Vector3 flipDestXZ = transform.position + flipDir * strafeDistance;
+                flipDestXZ.y = transform.position.y;
+
+                Vector3 flipNavDest = flipDestXZ;
+                if (NavMesh.SamplePosition(flipDestXZ, out NavMeshHit flipHit, strafeDistance * 0.8f, NavMesh.AllAreas))
+                    flipNavDest = flipHit.position;
+
+                agent.SetDestination(flipNavDest);
+                Debug.Log("Moai Pirate Ship: Re-rolling — strafing to opposite side.");
+
+                // Brief move, then exit — don't wait for full arrival, just get moving
+                yield return new WaitForSeconds(1.2f);
+            }
+            else
+            {
+                Debug.Log("Moai Pirate Ship: Re-rolling — breaking off to reposition.");
+                // Just break off; ExitAggressive will send us back to patrol/rescore
+            }
+
+            // ── 5. Exit ───────────────────────────────────────────────────
+            isCannonStrafing = false;
+
+            if (UnityEngine.Random.Range(0f, 1f) < ExitAggressiveChance)
+            {
+                ExitAggressiveChance = 0f;
+                ExitAggressive();
+            }
+            else
+            {
+                ExitAggressiveChance += ExitAggressiveChanceIncrease;
+            }
         }
 
         // ─────────────────────────────────────────────────────────────────
@@ -611,10 +748,10 @@ namespace MoaiEnemy.src.MoaiPirate
                 var GO = target.gameObject;
                 if (GO.GetComponent<EnemyAI>()) { GO.GetComponent<EnemyAI>().enabled = false; }
                 if (GO.GetComponent<NavMeshAgent>()) { GO.GetComponent<NavMeshAgent>().enabled = false; }
-                if (GO.GetComponent<GrabbableObject>()) 
+                if (GO.GetComponent<GrabbableObject>())
                 {
                     if (VoiceThereBeTreasure) { VoiceThereBeTreasure.Play(); }
-                    GO.GetComponent<GrabbableObject>().enabled = false; 
+                    GO.GetComponent<GrabbableObject>().enabled = false;
                 }
             }
 
@@ -686,7 +823,7 @@ namespace MoaiEnemy.src.MoaiPirate
             agent.ResetPath();
 
             // ── 2. Fire chain toward cruiser ──────────────────────────────
-            if(VoiceThereBeTreasure) { VoiceThereBeTreasure.Play(); }
+            if (VoiceThereBeTreasure) { VoiceThereBeTreasure.Play(); }
             grappleChain.gameObject.SetActive(true);
             grappleChain.endPointTransform.position = grappleChain.transform.position;
             if (grappleFireSound) grappleFireSound.Play();
@@ -712,9 +849,9 @@ namespace MoaiEnemy.src.MoaiPirate
             //   - cruiser rigidbody is pulled toward the chain endpoint (ship underside)
             //   - chain endpoint snaps to cruiser transform each frame (visual only via LateUpdate)
             //   - grabbedGO drives LateUpdate to keep chain tip on the cruiser
-            if (captain) 
-            { 
-                captain.PlayRandomPirateVoiceline(); 
+            if (captain)
+            {
+                captain.PlayRandomPirateVoiceline();
             }
             grabbedGO = cruiser.gameObject;   // LateUpdate will keep chain tip on the cruiser
 
@@ -815,6 +952,7 @@ namespace MoaiEnemy.src.MoaiPirate
             aggroScrap = null;
             aggroCruiser = null;
             actionExecuted = false;
+            isCannonStrafing = false;  // safety reset in case of external early exit
             rescoreTimer = 0f;
             InitPhaseTraveling(Vector3.zero);
         }

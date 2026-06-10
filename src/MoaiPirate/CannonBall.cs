@@ -5,6 +5,7 @@ using LethalLib.Modules;
 using GameNetcodeStuff;
 using Unity.Netcode;
 using System.Numerics;
+using MoaiEnemy.src.MoaiPirate;
 
 namespace MoaiEnemy.src.MoaiNormal
 {
@@ -53,10 +54,32 @@ namespace MoaiEnemy.src.MoaiNormal
                 return;
             }
 
-            if (collision.collider)
+            if (collision.collider && !shipWalk(collision.gameObject))
             {
                 spawnExplosionClientRpc();
             }
+        }
+
+        public bool shipWalk(GameObject leaf)
+        {
+            while (leaf != null && leaf.GetComponent<MoaiPirateShip>() == null)
+            {
+                if (leaf.transform.parent && leaf.transform.parent.gameObject)
+                {
+                    leaf = leaf.transform.parent.gameObject;
+                }
+                else
+                {
+                    leaf = null;
+                }
+            }
+
+            if (leaf && leaf.GetComponent<MoaiPirateShip>())
+            {
+                return true;
+            }
+
+            return false;
         }
 
         [ClientRpc]
@@ -65,7 +88,7 @@ namespace MoaiEnemy.src.MoaiNormal
             // landmine stats: Landmine.SpawnExplosion(base.transform.position + Vector3.up, false, 5.7f, 6f, 50, 0f, null, false);
             // old bird stats: Landmine.SpawnExplosion(explosionPosition - forwardRotation * 0.1f, true, 1f, 7f, 30, 65f, this.explosionPrefab, false);
             Landmine.SpawnExplosion(transform.position, true, 2.5f, 5.7f, 33, 80f);  // 33 dmg, stronger force than old birds. easier to insta kill, harder to partially be hit
-            Destroy(this);
+            Destroy(this.gameObject);
         }
     }
 }

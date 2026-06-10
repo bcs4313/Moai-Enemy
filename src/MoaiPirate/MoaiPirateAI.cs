@@ -42,6 +42,7 @@ namespace MoaiEnemy.src.MoaiNormal
         {
             baseInit();
 
+            stamina = 100f;
             if (RoundManager.Instance.IsHost)
             {
                 // ship setup
@@ -161,6 +162,7 @@ namespace MoaiEnemy.src.MoaiNormal
 
         public void PlayRandomPirateVoiceline()
         {
+            if(isEnemyDead) { return; }
             if(PirateVoicelines != null && PirateVoicelines.Length > 0)
             {
                 PirateVoicelines[UnityEngine.Random.Range(0, PirateVoicelines.Length)].Play();
@@ -170,12 +172,12 @@ namespace MoaiEnemy.src.MoaiNormal
         // shotgun fire feature
         bool firingGun = false;
         public Animator ShotgunAnimator;
-        public AudioSource[] PirateVoicelines;  // randomly played
+        public AudioSource[] PirateVoicelines;  // randomly playeda
         public AudioSource ShotgunPrepareSound;
         public AudioSource ShotgunReloadSound;  // currently unused
         public IEnumerator FireShotgun()
         {
-            if(firingGun) { yield break; }
+            if (firingGun || isEnemyDead) { yield break; }
             firingGun = true;
 
             // first yell out a warning!
@@ -189,12 +191,14 @@ namespace MoaiEnemy.src.MoaiNormal
             ShotgunAnimator.Play("Fire");  // transitions to firing anim
 
             // now that we are in the fire animation, actually fire the gun
+            int tempHealth = enemyHP;
             mountedShotgun.shellsLoaded = 2;
             mountedShotgun.isReloading = false;
             mountedShotgun.safetyOn = false;
             mountedShotgun.ShootGunAndSync(false);
 
             yield return new WaitForSeconds(0.3f);
+            enemyHP = tempHealth;
 
             firingGun = false;
         }
