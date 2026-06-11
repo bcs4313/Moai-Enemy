@@ -202,7 +202,11 @@ namespace MoaiEnemy
 
                 var normPkg = new RawspawnHandler.enemyRarityPkg();
                 normPkg.name = MoaiEnemy.name;
-                normPkg.rarity = (int)(58 * baseRarity.Value * rawSpawnMultiplier);
+                normPkg.rarity = (int)(48 * baseRarity.Value * rawSpawnMultiplier);
+
+                var piratePkg = new RawspawnHandler.enemyRarityPkg();
+                piratePkg.name = MoaiPirate.name;
+                piratePkg.rarity = (int)(10 * pirateRarity.Value * rawSpawnMultiplier);
 
                 var greenPkg = new RawspawnHandler.enemyRarityPkg();
                 greenPkg.name = MoaiGreen.name;
@@ -228,7 +232,7 @@ namespace MoaiEnemy
                 goldPkg.name = MoaiGold.name;
                 goldPkg.rarity = (int)(4 * goldRarity.Value * rawSpawnMultiplier);
 
-                RawspawnHandler.setLevelSpawnWeights([normPkg, goldPkg, bluePkg, redPkg, greenPkg, purplePkg, orangePkg], []);
+                RawspawnHandler.setLevelSpawnWeights([normPkg, goldPkg, bluePkg, redPkg, greenPkg, purplePkg, orangePkg, piratePkg], []);
 
                 orig.Invoke(self, randomSeed, newLevel);
 
@@ -265,6 +269,7 @@ namespace MoaiEnemy
         public static ConfigEntry<float> purpleRarity;
         public static ConfigEntry<float> goldRarity;
         public static ConfigEntry<float> orangeRarity;
+        public static ConfigEntry<float> pirateRarity;
         public static ConfigEntry<float> soulRarity;
         public static ConfigEntry<float> simpleSpawnMultiplier;
         public static ConfigEntry<string> moaiTargetBlacklist;
@@ -287,6 +292,7 @@ namespace MoaiEnemy
             purpleRarity = Config.Bind("Variants", "Purple Moai Spawnrate", 1f, "Changes the spawnrate of the variant.");
             goldRarity = Config.Bind("Variants", "Gold Moai Spawnrate", 1f, "Changes the spawnrate of the variant.");
             orangeRarity = Config.Bind("Variants", "Orange Moai Spawnrate", 1f, "Changes the spawnrate of the variant.");
+            pirateRarity = Config.Bind("Variants", "Pirate Moai Spawnrate", 1f, "Changes the spawnrate of the variant.");
             soulRarity = Config.Bind("Variants", "Devourer Spawnrate", 0.4f, "Changes the spawnrate of this... thing. Note that devourers don't spawn naturally, they have a chance to spawn when any moai consumes a corpse.");
             moaiTargetBlacklist = Config.Bind("Advanced", "Enemy targeting blacklist", "mask hornets, roaming locusts, jester, hygrodere, butler, barber, ghost girl, circuit bees, giant sapsucker, old bird, living trap, pikmin, cutiefly", "A blacklist for enemies that angel moai will not target or damage. Put in the name of the enemy you see when you scan them in game. Not case sensitive. Comma separated list.");
 
@@ -393,6 +399,13 @@ namespace MoaiEnemy
                 Max = 10000f,
             });
 
+            var pirateEntry = new FloatInputFieldConfigItem(pirateRarity, new FloatInputFieldOptions
+            {
+                RequiresRestart = false,
+                Min = 0.0f,
+                Max = 10000f,
+            });
+
             var devourerEntry = new FloatInputFieldConfigItem(goldRarity, new FloatInputFieldOptions
             {
                 RequiresRestart = false,
@@ -427,6 +440,7 @@ namespace MoaiEnemy
             LethalConfigManager.AddConfigItem(purpleEntry);
             LethalConfigManager.AddConfigItem(goldEntry);
             LethalConfigManager.AddConfigItem(orangeEntry);
+            LethalConfigManager.AddConfigItem(pirateEntry);
             LethalConfigManager.AddConfigItem(devourerEntry);
             LethalConfigManager.AddConfigItem(maxSizeEntry);
             LethalConfigManager.AddConfigItem(moaiTargetBlacklistEntry);

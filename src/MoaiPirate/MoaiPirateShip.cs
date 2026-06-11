@@ -23,7 +23,7 @@ namespace MoaiEnemy.src.MoaiPirate
     // in the lowering phase, the ship will attempt to "fit" its own hitbox to the destination, via random sampling
     // 4 - aggressive, the ship is pursuing a high-value target
 
-    internal class MoaiPirateShip : NetworkBehaviour
+    public class MoaiPirateShip : NetworkBehaviour
     {
         public NavMeshAgent agent;
         public String phase = "landed";
@@ -37,6 +37,8 @@ namespace MoaiEnemy.src.MoaiPirate
         public Transform PoopDeck;
         public Transform Bow;
         public Transform WheelPoint;  // the moai must be here in the traveling phase
+
+        public static List<EnemyType> storedEnemies;
 
         public float yLevel = 0f;
         public float targetYLevel = 0f;
@@ -81,12 +83,37 @@ namespace MoaiEnemy.src.MoaiPirate
         public AudioSource landingBell;      // indicates the ship is landing
         public AudioSource shipTakingOffSound;  // heavy creaking sfx
 
+        // AudioSource client rpcs
+        [ClientRpc]
+        public void PlayShipHornThreatenClientRpc()
+        {
+            shipHornThreaten.Play();
+        }
+        [ClientRpc]
+        public void PlayShipHornStealingClientRpc()
+        {
+            shipHornStealing.Play();
+        }
+        [ClientRpc]
+        public void PlayLandingBellClientRpc()
+        {
+            landingBell.Play();
+        }
+        [ClientRpc]
+        public void PlayShipTakingOffSoundClientRpc()
+        {
+            shipTakingOffSound.Play();
+        }
+
         void Start()
         {
-            yLevel = transform.position.y;
             if (transform.localScale.y > 2.1f) { transform.localScale = new Vector3(2, 2, 2); } // can't be scaled to be larger, very buggy otherwise
+            storedEnemies = new List<EnemyType>();
+            yLevel = transform.position.y;
             targetYLevel = transform.position.y;
-            grappleChain.gameObject.SetActive(false);
+
+            if (!RoundManager.Instance.IsHost) { return; }
+            setEnableGrappleClientRpc(false);  // grapple gameobject set active
         }
 
         float baseSpeed = 3.2f;
@@ -241,7 +268,7 @@ namespace MoaiEnemy.src.MoaiPirate
         }
 
 
-        public static float fireCannonOverLoweringChance = 0.7f;  // 66%
+        public static float fireCannonOverLoweringChance = 0.83f;
         // ─────────────────────────────────────────────────────────────────
         //  SCORING
         // ─────────────────────────────────────────────────────────────────
@@ -272,7 +299,7 @@ namespace MoaiEnemy.src.MoaiPirate
                     }
                 }
 
-                float score = 32f - dist + heldValue;
+                float score = 32f - dist + (heldValue/8);
                 if (score > bestScore)
                 {
                     bestScore = score;
@@ -512,7 +539,7 @@ namespace MoaiEnemy.src.MoaiPirate
                     FireCannon();
                     break;
                 case AggressiveAction.Grapple:
-                    if (shipHornStealing) { shipHornStealing.Play(); }
+                    if (shipHornStealing) { PlayShipHornStealingClientRpc(); }
                     FireGrapple();
                     break;
                 case AggressiveAction.Lower:
@@ -544,11 +571,18 @@ namespace MoaiEnemy.src.MoaiPirate
             StartCoroutine(CannonAttackRoutine());
         }
 
+        [ClientRpc]
+        public void PlayCannonSoundClientRpc()
+        {
+            cannonSound.Play();
+        }
+
         // ─────────────────────────────────────────────────────────────────
         //  CANNON ATTACK ROUTINE  (probabilistic strafe → broadside → reposition)
         // ─────────────────────────────────────────────────────────────────3
         public float ExitAggressiveChanceIncrease = 0.2f;
         public float ExitAggressiveChance = 0f;
+        public AudioSource cannonSound;
         private IEnumerator CannonAttackRoutine()
         {
             if (isCannonStrafing) yield break;
@@ -629,7 +663,8 @@ namespace MoaiEnemy.src.MoaiPirate
                 float scale = transform.localScale.y / 4;
                 ball.transform.localScale = new Vector3(scale, scale, scale);
                 ball.GetComponent<NetworkObject>().Spawn();
-
+                ball.GetComponent<CannonBall>().SetOwner(captain.gameObject);  // prevent hurting self
+                if(cannonSound) { PlayCannonSoundClientRpc(); }
                 shotsFired++;
                 Debug.Log($"Moai Pirate Ship: Cannon [{i}] fired — angle={angle:F1}°");
 
@@ -680,6 +715,30 @@ namespace MoaiEnemy.src.MoaiPirate
             }
         }
 
+        [ClientRpc]
+        public void PlayGrappleFireSoundClientRpc()
+        {
+            grappleFireSound.Play();
+        }
+
+        [ClientRpc]
+        public void PlayGrappleHitSoundClientRpc()
+        {
+            grappleHitSound.Play();
+        }
+
+        [ClientRpc]
+        public void PlayGrappleRetractSoundClientRpc()
+        {
+            grappleRetractSound.Play();
+        }
+
+        [ClientRpc]
+        public void setEnableGrappleClientRpc(bool enabled)
+        {
+            grappleChain.gameObject.SetActive(enabled);
+        }
+
         // ─────────────────────────────────────────────────────────────────
         //  GRAPPLE
         // ─────────────────────────────────────────────────────────────────
@@ -725,9 +784,9 @@ namespace MoaiEnemy.src.MoaiPirate
             isGrappling = true;
             actionExecuted = true;
 
-            grappleChain.gameObject.SetActive(true);
+            setEnableGrappleClientRpc(true);  // grapple gameobject set active
             grappleChain.endPointTransform.position = grappleChain.transform.position;
-            if (grappleFireSound) grappleFireSound.Play();
+            if (grappleFireSound) PlayGrappleFireSoundClientRpc();
 
             // extend toward target
             while (target != null && Vector3.Distance(grappleChain.endPointTransform.position, target.position) > 0.4f)
@@ -739,7 +798,7 @@ namespace MoaiEnemy.src.MoaiPirate
             }
 
             // latch
-            if (grappleHitSound) grappleHitSound.Play();
+            if (grappleHitSound) PlayGrappleHitSoundClientRpc();
 
             // disable components that override transforms so we can drag the object
             if (target != null && target.gameObject)
@@ -750,7 +809,7 @@ namespace MoaiEnemy.src.MoaiPirate
                 if (GO.GetComponent<NavMeshAgent>()) { GO.GetComponent<NavMeshAgent>().enabled = false; }
                 if (GO.GetComponent<GrabbableObject>())
                 {
-                    if (VoiceThereBeTreasure) { VoiceThereBeTreasure.Play(); }
+                    if (VoiceThereBeTreasure) { PlayVoiceThereBeTreasureClientRpc(); }
                     GO.GetComponent<GrabbableObject>().enabled = false;
                 }
             }
@@ -758,7 +817,7 @@ namespace MoaiEnemy.src.MoaiPirate
             yield return new WaitForSeconds(grappleHoldTime);
 
             // retract
-            if (grappleRetractSound) grappleRetractSound.Play();
+            if (grappleRetractSound) PlayGrappleHitSoundClientRpc();
             Vector3 retractTarget = grappleChain.transform.position;
             while (Vector3.Distance(grappleChain.endPointTransform.position, retractTarget) > 0.3f)
             {
@@ -773,6 +832,9 @@ namespace MoaiEnemy.src.MoaiPirate
             if (aggroEnemy != null)
             {
                 aggroEnemy.gameObject.SetActive(false);
+
+                storedEnemies.Add(aggroEnemy.enemyType);
+
                 Destroy(aggroEnemy.gameObject, 0.1f);
                 aggroEnemy = null;
             }
@@ -783,10 +845,16 @@ namespace MoaiEnemy.src.MoaiPirate
                 aggroScrap = null;
             }
 
-            grappleChain.gameObject.SetActive(false);
+            setEnableGrappleClientRpc(false);  // grapple gameobject set active
             isGrappling = false;
             grabbedGO = null;
             ExitAggressive();  // now safe to exit
+        }
+
+        [ClientRpc]
+        public void PlayVoiceThereBeTreasureClientRpc()
+        {
+            VoiceThereBeTreasure.Play();
         }
 
         // ─────────────────────────────────────────────────────────────────
@@ -823,10 +891,10 @@ namespace MoaiEnemy.src.MoaiPirate
             agent.ResetPath();
 
             // ── 2. Fire chain toward cruiser ──────────────────────────────
-            if (VoiceThereBeTreasure) { VoiceThereBeTreasure.Play(); }
-            grappleChain.gameObject.SetActive(true);
+            if (VoiceThereBeTreasure) { PlayVoiceThereBeTreasureClientRpc(); }
+            setEnableGrappleClientRpc(true);  // grapple gameobject set active
             grappleChain.endPointTransform.position = grappleChain.transform.position;
-            if (grappleFireSound) grappleFireSound.Play();
+            if (grappleFireSound) PlayGrappleFireSoundClientRpc();
 
             while (cruiser != null && !cruiser.carDestroyed &&
                    Vector3.Distance(grappleChain.endPointTransform.position, cruiser.transform.position) > 0.8f)
@@ -838,7 +906,7 @@ namespace MoaiEnemy.src.MoaiPirate
             }
 
             // latch
-            if (grappleHitSound) grappleHitSound.Play();
+            if (grappleHitSound) PlayGrappleHitSoundClientRpc();
             Debug.Log("Moai Pirate Ship: Cruiser grapple latched — beginning flee.");
             grapplingCruiser = true;
             chainSimCurrent = grappleChain.endPointTransform.position;  // start from where chain landed
@@ -866,6 +934,8 @@ namespace MoaiEnemy.src.MoaiPirate
                 if (cruiser == null || cruiser.carDestroyed)
                 {
                     Debug.Log("Moai Pirate Ship: Cruiser destroyed during grapple hold — releasing.");
+                    grabbedGO = null;
+                    grapplingCruiser = false;
                     break;
                 }
 
@@ -916,7 +986,7 @@ namespace MoaiEnemy.src.MoaiPirate
             agent.ResetPath();   // stop fleeing
             grabbedGO = null;
 
-            if (grappleRetractSound) grappleRetractSound.Play();
+            if (grappleRetractSound) PlayGrappleRetractSoundClientRpc();
             Debug.Log("Moai Pirate Ship: Releasing cruiser — retracting chain.");
 
             Vector3 retractTarget = grappleChain.transform.position;
@@ -929,7 +999,7 @@ namespace MoaiEnemy.src.MoaiPirate
                 yield return null;
             }
 
-            grappleChain.gameObject.SetActive(false);
+            setEnableGrappleClientRpc(false);  // grapple gameobject set active
             isGrappling = false;
             grapplingCruiser = false;
             aggroCruiser = null;
@@ -959,10 +1029,22 @@ namespace MoaiEnemy.src.MoaiPirate
 
         // ─────────────────────────────────────────────────────────────────
         //  PHASE INITS
-        // ─────────────────────────────────────────────────────────────────
+        // ─────────────────────────────────────-────────────────────────────
         public void InitPhaseLanded()
         {
             phase = "landed";
+
+            try
+            {
+                // release any captured enemies
+                foreach(EnemyType enType in storedEnemies)
+                {
+                    var enemy = UnityEngine.Object.Instantiate(enType.enemyPrefab, this.transform.position, this.transform.rotation);
+                    enemy.GetComponent<NetworkObject>().Spawn();
+                }
+                storedEnemies.Clear();
+            }
+            catch(Exception e) { Debug.LogError(e); }
         }
 
         public static float lowestHeight = 5f;
@@ -970,7 +1052,7 @@ namespace MoaiEnemy.src.MoaiPirate
         public void InitPhaseRising()
         {
             captain.PlayRandomPirateVoiceline();
-            if (shipTakingOffSound) { shipTakingOffSound.Play(); }
+            if (shipTakingOffSound) { PlayShipTakingOffSoundClientRpc(); }
             phase = "rising";
             targetYLevel = transform.position.y + UnityEngine.Random.Range(lowestHeight, highestHeight);
             Debug.Log("Moai Pirate Ship: rising to height of: " + targetYLevel);
@@ -985,7 +1067,7 @@ namespace MoaiEnemy.src.MoaiPirate
             if (validHit)
             {
                 targetYLevel = hit.position.y;
-                if (landingBell) { landingBell.Play(); }
+                if (landingBell) { PlayLandingBellClientRpc(); }
             }
             else
             {
@@ -1017,7 +1099,7 @@ namespace MoaiEnemy.src.MoaiPirate
         // based on rng.
         public void InitPhaseAggressive()
         {
-            if (shipHornThreaten) { shipHornThreaten.Play(); }
+            if (shipHornThreaten) { PlayShipHornThreatenClientRpc(); }
             phase = "aggressive";
             rescoreTimer = 0f;   // score immediately on first update
             actionExecuted = false;

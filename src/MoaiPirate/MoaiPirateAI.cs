@@ -165,8 +165,27 @@ namespace MoaiEnemy.src.MoaiNormal
             if(isEnemyDead) { return; }
             if(PirateVoicelines != null && PirateVoicelines.Length > 0)
             {
-                PirateVoicelines[UnityEngine.Random.Range(0, PirateVoicelines.Length)].Play();
+                PlayVoicelineClientRpc(UnityEngine.Random.Range(0, PirateVoicelines.Length));
             }
+        }
+
+        // Audio Source client rpcs
+        [ClientRpc]
+        public void PlayVoicelineClientRpc(int index)
+        {
+            PirateVoicelines[index].Play();
+        }
+
+        [ClientRpc]
+        public void PlayShotgunPrepareClientRpc()
+        {
+            ShotgunPrepareSound.Play();
+        }
+
+        [ClientRpc]
+        public void PlayShotgunReloadClientRpc()
+        {
+            ShotgunReloadSound.Play();
         }
 
         // shotgun fire feature
@@ -183,7 +202,7 @@ namespace MoaiEnemy.src.MoaiNormal
             // first yell out a warning!
             PlayRandomPirateVoiceline();
             yield return new WaitForSeconds(0.5f);  // half second before cocking gun
-            if (ShotgunPrepareSound) { ShotgunPrepareSound.Play(); }  // play cocking sound. Yes this is nonsensical
+            if (ShotgunPrepareSound) { PlayShotgunPrepareClientRpc(); }  // play cocking sound. Yes this is nonsensical
 
             // reload and fire animation (state transitions handle this, intentionally backwards)
             ShotgunAnimator.Play("Reload");  // transitions to firing anim
@@ -192,6 +211,7 @@ namespace MoaiEnemy.src.MoaiNormal
 
             // now that we are in the fire animation, actually fire the gun
             int tempHealth = enemyHP;
+            enemyHP = 9999;
             mountedShotgun.shellsLoaded = 2;
             mountedShotgun.isReloading = false;
             mountedShotgun.safetyOn = false;
@@ -226,12 +246,15 @@ namespace MoaiEnemy.src.MoaiNormal
 
         private IEnumerator BurstFireRoutine()
         {
-            int shots = UnityEngine.Random.Range(burstShotsMin, burstShotsMax + 1);
-            for (int i = 0; i < shots; i++)
-            {
-                StartCoroutine(FireShotgun());
-                yield return new WaitForSeconds(burstInterval);
-            }
+                int shots = UnityEngine.Random.Range(burstShotsMin, burstShotsMax + 1);
+                for (int i = 0; i < shots; i++)
+                {
+                    yield return StartCoroutine(FireShotgun());   // wait for each shot to finish before next
+                    yield return new WaitForSeconds(burstInterval);
+                }
+
+            // moai is done chasing after burst
+            stamina = 0f;
         }
 
         [ClientRpc]
@@ -294,6 +317,7 @@ namespace MoaiEnemy.src.MoaiNormal
 
                 case (int)State.StickingInFrontOfPlayer:
                     baseStickingInFrontOfPlayer();
+                    agent.speed = 4.85f * moaiGlobalSpeed.Value;  // base moai speed = 5.3f, pirates are slower than this
                     break;
 
                 case (int)State.HeadSwingAttackInProgress:
@@ -372,6 +396,39 @@ namespace MoaiEnemy.src.MoaiNormal
                 default:
                     LogDebug("This Behavior State doesn't exist!");
                     break;
+            }
+        }
+
+        // override is the same as MOAIAICORE except without stamina update from any hit, only the player can make it angry
+        public override void HitEnemy(int force = 1, PlayerControllerB playerWhoHit = null, bool playHitSFX = false, int hitID = -1)
+        {
+            base.HitEnemy(force, playerWhoHit, playHitSFX);
+            if (this.isEnemyDead)
+            {
+                return;
+            }
+            this.enemyHP -= force;
+
+            if (playerWhoHit != null)
+            {
+                provokePoints += 20 * force;
+                targetPlayer = playerWhoHit;
+                stamina = 60f;
+            }
+            recovering = false;
+            if (base.IsOwner)
+            {
+                if (this.enemyHP <= 0)
+                {
+                    base.KillEnemyOnOwnerClient(false);
+                    this.stopAllSound();
+                    animator.SetInteger("state", 3);
+                    isEnemyDead = true;
+                    moaiSoundPlayClientRpc("creatureDeath");
+                    return;
+                }
+
+                moaiSoundPlayClientRpc("creatureHit");
             }
         }
 
