@@ -56,6 +56,19 @@ namespace MoaiEnemy.src.MoaiNormal
                 SetupInvisShotgun();
             }
             goodBoy = -1;
+            try
+            {
+                ShotgunPrepareSound.volume = Plugin.moaiGlobalMusicVol.Value / 0.6f;
+                ShotgunReloadSound.volume = Plugin.moaiGlobalMusicVol.Value / 0.6f;
+                foreach (AudioSource src in PirateVoicelines)
+                {
+                    if (src) { src.volume = Plugin.moaiGlobalMusicVol.Value / 0.6f; }
+                }
+            }
+            catch(Exception e)
+            {
+                Debug.LogError(e);
+            }
         }
 
         // the moai has a blunderbuss that it operates.
@@ -90,15 +103,70 @@ namespace MoaiEnemy.src.MoaiNormal
             }
             Debug.LogError("Moai Pirate: failed to find shotgun prefab to use as blunderbuss. Blunderbuss will not fire!");
         }
+
+        [ServerRpc(RequireOwnership = false)]
+        public void RequestForShotgunServerRpc()
+        {
+            if (mountedShotgun)
+            {
+                ClientShotgunSetupClientRpc(mountedShotgun.NetworkObjectId);
+            }
+        }
+
+        [ClientRpc]
+        public void ClientShotgunSetupClientRpc(ulong uid)
+        {
+            var guns = FindObjectsOfType<ShotgunItem>();
+            foreach(var gun in guns)
+            {
+                if(gun.NetworkObjectId == uid)
+                {
+                    mountedShotgun = gun;
+                    if (mountedShotgun.TryGetComponent<Rigidbody>(out var rb))
+                    {
+                        rb.isKinematic = true;
+                    }
+                    mountedShotgun.isHeld = true;
+                    mountedShotgun.isHeldByEnemy = this;
+                    mountedShotgun.hasHitGround = true;
+                    mountedShotgun.reachedFloorTarget = true;
+                    mountedShotgun.scrapValue = 0;
+                    var renderers = mountedShotgun.gameObject.GetComponentsInChildren<MeshRenderer>();
+                    foreach(var render in renderers)
+                    {
+                        if (render) { render.enabled = false; }
+                    }
+                    var renderers2 = mountedShotgun.gameObject.GetComponent<MeshRenderer>();
+                    if(renderers2) { renderers2.enabled = false; }
+                    Debug.Log("Moai Pirate: Shotgun set up for client successful -> " + mountedShotgun + " - >" + mountedShotgun.NetworkObjectId);
+                }
+            }
+        } 
         
         bool notifiedClientsOfShip = false;
         float randomVoicelineTimer = 4f;
         public static float voicelineDelayLower = 1f;
         public static float voicelineDelayUpper= 16f;
+        public float reqCooldownShotgun = 0.2f;
         public override void Update()
         {
             base.Update();
             baseUpdate();
+
+            // client shotgun setup
+            if (!RoundManager.Instance.IsHost && !mountedShotgun && reqCooldownShotgun < 0f)
+            {
+                RequestForShotgunServerRpc();
+                reqCooldownShotgun = 0.2f;
+            }
+            reqCooldownShotgun -= Time.deltaTime;
+
+            // position sync for shotgun
+            if (mountedShotgun)
+            {
+                mountedShotgun.gameObject.transform.position = shotgunMount.transform.position;
+                mountedShotgun.gameObject.transform.rotation = shotgunMount.transform.rotation;
+            }
 
             if (triggerLinkGameObject && RoundManager.Instance.IsHost)
             {
@@ -112,12 +180,6 @@ namespace MoaiEnemy.src.MoaiNormal
                     if (triggerLinkGameObject.activeInHierarchy)
                         triggerLinkDisableClientRpc();
                 }
-            }
-
-            if(mountedShotgun)
-            {
-                mountedShotgun.gameObject.transform.position = shotgunMount.transform.position;
-                mountedShotgun.gameObject.transform.rotation = shotgunMount.transform.rotation;
             }
 
             switch (currentBehaviourStateIndex)
@@ -194,24 +256,6 @@ namespace MoaiEnemy.src.MoaiNormal
             ShotgunAnimator.Play(id);
         }
 
-        [ClientRpc]
-        public void FireShotgunClientRpc(ulong ShotgunID, int reboundHP)
-        {
-            var shotguns = FindObjectsOfType<ShotgunItem>();
-
-            foreach (var gun in shotguns)
-            {
-                if (gun.NetworkObjectId == ShotgunID)
-                {
-                    enemyHP = 9999;
-                    gun.shellsLoaded = 2;
-                    gun.isReloading = false;
-                    gun.safetyOn = false;
-                    gun.ShootGunAndSync(false);
-                }
-            }
-        }
-
         // shotgun fire feature
         bool firingGun = false;
         public Animator ShotgunAnimator;
@@ -220,7 +264,9 @@ namespace MoaiEnemy.src.MoaiNormal
         public AudioSource ShotgunReloadSound;  // currently unused
         public IEnumerator FireShotgun()
         {
+            if (!RoundManager.Instance.IsHost) yield break;
             if (firingGun || isEnemyDead) { yield break; }
+
             firingGun = true;
 
             // first yell out a warning!
@@ -230,18 +276,30 @@ namespace MoaiEnemy.src.MoaiNormal
 
             // reload and fire animation (state transitions handle this, intentionally backwards)
             ShotgunAnimatorPlayClientRpc("Reload");
+            int tempHealth = enemyHP;
+            TempHpClientRpc(9999);
             yield return new WaitForSeconds(1.14f);
             ShotgunAnimatorPlayClientRpc("Fire");
 
             // now that we are in the fire animation, actually fire the gun
-            int tempHealth = enemyHP;
-            enemyHP = 9999;
-            FireShotgunClientRpc(mountedShotgun.NetworkObjectId, tempHealth);
+            if (currentBehaviourStateIndex == (int)State.StickingInFrontOfPlayer)
+            {
+                mountedShotgun.shellsLoaded = 2;
+                mountedShotgun.isReloading = false;
+                mountedShotgun.safetyOn = false;
+                mountedShotgun.ShootGunAndSync(false);
+            }
 
             yield return new WaitForSeconds(0.3f);
-            enemyHP = tempHealth;
+            TempHpClientRpc(tempHealth);
 
             firingGun = false;
+        }
+
+        [ClientRpc]
+        public void TempHpClientRpc(int val)
+        {
+            enemyHP = val;
         }
 
         // ── Burst fire ────────────────────────────────────────────────────
@@ -256,6 +314,7 @@ namespace MoaiEnemy.src.MoaiNormal
         public void UpdateBurstFire()
         {
             if (firingGun) return;
+            if (!RoundManager.Instance.IsHost) return;
 
             burstCooldownTimer -= Time.deltaTime;
             if (burstCooldownTimer <= 0f)
@@ -265,6 +324,7 @@ namespace MoaiEnemy.src.MoaiNormal
             }
         }
 
+        bool inBurstRoutine = false;
         private IEnumerator BurstFireRoutine()
         {
                 int shots = UnityEngine.Random.Range(burstShotsMin, burstShotsMax + 1);
@@ -346,6 +406,11 @@ namespace MoaiEnemy.src.MoaiNormal
                     break;
 
                 case (int)State.HeadingToShip:
+                    if (provokePoints > 0)
+                    {
+                        SwitchToBehaviourClientRpc((int)State.StickingInFrontOfPlayer);
+                    }
+
                     if (agent.destination == Vector3.zero || !agent.hasPath)
                     {
                         SetDestinationToPosition(GetWheelDestination());
@@ -472,7 +537,7 @@ namespace MoaiEnemy.src.MoaiNormal
             else
             {
                 agent.updatePosition = true;
-                NavMesh.SamplePosition(transform.position, out NavMeshHit hit, 20f, NavMesh.AllAreas);
+                NavMesh.SamplePosition(ship.transform.position, out NavMeshHit hit, 20f, NavMesh.AllAreas);
                 transform.position = hit.position;
                 boardedShip = false;
             }

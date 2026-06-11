@@ -202,11 +202,11 @@ namespace MoaiEnemy
 
                 var normPkg = new RawspawnHandler.enemyRarityPkg();
                 normPkg.name = MoaiEnemy.name;
-                normPkg.rarity = (int)(48 * baseRarity.Value * rawSpawnMultiplier);
+                normPkg.rarity = (int)(44 * baseRarity.Value * rawSpawnMultiplier);
 
                 var piratePkg = new RawspawnHandler.enemyRarityPkg();
                 piratePkg.name = MoaiPirate.name;
-                piratePkg.rarity = (int)(10 * pirateRarity.Value * rawSpawnMultiplier);
+                piratePkg.rarity = (int)(14 * pirateRarity.Value * rawSpawnMultiplier);
 
                 var greenPkg = new RawspawnHandler.enemyRarityPkg();
                 greenPkg.name = MoaiGreen.name;
@@ -406,7 +406,7 @@ namespace MoaiEnemy
                 Max = 10000f,
             });
 
-            var devourerEntry = new FloatInputFieldConfigItem(goldRarity, new FloatInputFieldOptions
+            var devourerEntry = new FloatInputFieldConfigItem(soulRarity, new FloatInputFieldOptions
             {
                 RequiresRestart = false,
                 Min = 0.0f,

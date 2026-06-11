@@ -38,7 +38,7 @@ namespace MoaiEnemy.src.MoaiPirate
         public Transform Bow;
         public Transform WheelPoint;  // the moai must be here in the traveling phase
 
-        public static List<EnemyType> storedEnemies;
+        public List<EnemyType> storedEnemies;
 
         public float yLevel = 0f;
         public float targetYLevel = 0f;
@@ -111,6 +111,19 @@ namespace MoaiEnemy.src.MoaiPirate
             storedEnemies = new List<EnemyType>();
             yLevel = transform.position.y;
             targetYLevel = transform.position.y;
+
+            try
+            {
+                cannonSound.volume = Plugin.moaiGlobalMusicVol.Value / 0.6f;
+                grappleFireSound.volume = Plugin.moaiGlobalMusicVol.Value / 0.6f;
+                grappleHitSound.volume = Plugin.moaiGlobalMusicVol.Value / 0.6f;
+                grappleRetractSound.volume = Plugin.moaiGlobalMusicVol.Value / 0.6f;
+                shipTakingOffSound.volume = Plugin.moaiGlobalMusicVol.Value / 0.6f;
+            }
+            catch (Exception e)
+            {
+                Debug.LogError(e);
+            }
 
             if (!RoundManager.Instance.IsHost) { return; }
             setEnableGrappleClientRpc(false);  // grapple gameobject set active
@@ -357,7 +370,7 @@ namespace MoaiEnemy.src.MoaiPirate
                 if (dist > MoaiPirateAI.shipSightRange * 1.33f) continue;
 
                 float score = item.scrapValue - dist;
-                if (score > bestScore)
+                if (score > bestScore && !item.isInShipRoom)
                 {
                     bestScore = score;
                     bestPlayer = null;
@@ -774,6 +787,27 @@ namespace MoaiEnemy.src.MoaiPirate
             StartCoroutine(GrappleRoutine(target));
         }
 
+        [ClientRpc]
+        public void DisableGOClientRpc(ulong uid)
+        {
+            var enemies = FindObjectsOfType<EnemyAI>();
+            foreach(var enemy in enemies)
+            {
+                if(enemy.NetworkObjectId == uid)
+                {
+                    var GO = enemy.gameObject;
+                    if (GO.GetComponent<EnemyAI>()) { GO.GetComponent<EnemyAI>().enabled = false; }
+                    if (GO.GetComponent<NavMeshAgent>()) { GO.GetComponent<NavMeshAgent>().enabled = false; }
+                    if (GO.GetComponent<GrabbableObject>())
+                    {
+                        if (VoiceThereBeTreasure && RoundManager.Instance.IsHost) { PlayVoiceThereBeTreasureClientRpc(); }
+                        GO.GetComponent<GrabbableObject>().enabled = false;
+                    }
+                    grabbedGO = GO;
+                }
+            }
+        }
+
         // ─────────────────────────────────────────────────────────────────
         //  GRAPPLE ROUTINE  (enemy / scrap)
         // ─────────────────────────────────────────────────────────────────
@@ -805,12 +839,9 @@ namespace MoaiEnemy.src.MoaiPirate
             {
                 grabbedGO = target.gameObject;
                 var GO = target.gameObject;
-                if (GO.GetComponent<EnemyAI>()) { GO.GetComponent<EnemyAI>().enabled = false; }
-                if (GO.GetComponent<NavMeshAgent>()) { GO.GetComponent<NavMeshAgent>().enabled = false; }
-                if (GO.GetComponent<GrabbableObject>())
+                if (GO.GetComponent<NetworkObject>())
                 {
-                    if (VoiceThereBeTreasure) { PlayVoiceThereBeTreasureClientRpc(); }
-                    GO.GetComponent<GrabbableObject>().enabled = false;
+                    DisableGOClientRpc(GO.GetComponent<NetworkObject>().NetworkObjectId);
                 }
             }
 
@@ -848,7 +879,14 @@ namespace MoaiEnemy.src.MoaiPirate
             setEnableGrappleClientRpc(false);  // grapple gameobject set active
             isGrappling = false;
             grabbedGO = null;
+            SetGrabbedGONullClientRpc();
             ExitAggressive();  // now safe to exit
+        }
+
+        [ClientRpc]
+        public void SetGrabbedGONullClientRpc()
+        {
+            grabbedGO = null;
         }
 
         [ClientRpc]
