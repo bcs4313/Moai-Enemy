@@ -188,6 +188,30 @@ namespace MoaiEnemy.src.MoaiNormal
             ShotgunReloadSound.Play();
         }
 
+        [ClientRpc]
+        public void ShotgunAnimatorPlayClientRpc(String id)
+        {
+            ShotgunAnimator.Play(id);
+        }
+
+        [ClientRpc]
+        public void FireShotgunClientRpc(ulong ShotgunID, int reboundHP)
+        {
+            var shotguns = FindObjectsOfType<ShotgunItem>();
+
+            foreach (var gun in shotguns)
+            {
+                if (gun.NetworkObjectId == ShotgunID)
+                {
+                    enemyHP = 9999;
+                    gun.shellsLoaded = 2;
+                    gun.isReloading = false;
+                    gun.safetyOn = false;
+                    gun.ShootGunAndSync(false);
+                }
+            }
+        }
+
         // shotgun fire feature
         bool firingGun = false;
         public Animator ShotgunAnimator;
@@ -205,17 +229,14 @@ namespace MoaiEnemy.src.MoaiNormal
             if (ShotgunPrepareSound) { PlayShotgunPrepareClientRpc(); }  // play cocking sound. Yes this is nonsensical
 
             // reload and fire animation (state transitions handle this, intentionally backwards)
-            ShotgunAnimator.Play("Reload");  // transitions to firing anim
+            ShotgunAnimatorPlayClientRpc("Reload");
             yield return new WaitForSeconds(1.14f);
-            ShotgunAnimator.Play("Fire");  // transitions to firing anim
+            ShotgunAnimatorPlayClientRpc("Fire");
 
             // now that we are in the fire animation, actually fire the gun
             int tempHealth = enemyHP;
             enemyHP = 9999;
-            mountedShotgun.shellsLoaded = 2;
-            mountedShotgun.isReloading = false;
-            mountedShotgun.safetyOn = false;
-            mountedShotgun.ShootGunAndSync(false);
+            FireShotgunClientRpc(mountedShotgun.NetworkObjectId, tempHealth);
 
             yield return new WaitForSeconds(0.3f);
             enemyHP = tempHealth;
