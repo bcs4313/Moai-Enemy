@@ -15,6 +15,7 @@ using MoaiEnemy.src.MoaiNormal;
 using System.Collections.Generic;
 using MoaiEnemy.src.Utilities;
 using System;
+using MoaiEnemy.src.MoaiPirate;
 
 namespace MoaiEnemy
 {
@@ -191,48 +192,60 @@ namespace MoaiEnemy
             // actual logic for setting rarity
             On.RoundManager.LoadNewLevel += (On.RoundManager.orig_LoadNewLevel orig, global::RoundManager self, int randomSeed, global::SelectableLevel newLevel) =>
             {
-                if (newLevel.PlanetName.Contains("Easter"))
+                try
                 {
-                    rawSpawnMultiplier = RawspawnHandler.getSpawnMultiplier(true);
+                    if (newLevel.PlanetName.Contains("Easter"))
+                    {
+                        rawSpawnMultiplier = RawspawnHandler.getSpawnMultiplier(true);
+                    }
+                    else
+                    {
+                        rawSpawnMultiplier = RawspawnHandler.getSpawnMultiplier();
+                    }
+
+                    var normPkg = new RawspawnHandler.enemyRarityPkg();
+                    normPkg.name = MoaiEnemy.name;
+                    normPkg.rarity = (int)(46 * baseRarity.Value * rawSpawnMultiplier);
+
+                    var piratePkg = new RawspawnHandler.enemyRarityPkg();
+                    piratePkg.name = MoaiPirate.name;
+                    piratePkg.rarity = (int)(12 * pirateRarity.Value * rawSpawnMultiplier);
+
+                    var greenPkg = new RawspawnHandler.enemyRarityPkg();
+                    greenPkg.name = MoaiGreen.name;
+                    greenPkg.rarity = (int)(30 * greenRarity.Value * rawSpawnMultiplier);
+
+                    var purplePkg = new RawspawnHandler.enemyRarityPkg();
+                    purplePkg.name = MoaiPurple.name;
+                    purplePkg.rarity = (int)(35 * purpleRarity.Value * rawSpawnMultiplier);
+
+                    var bluePkg = new RawspawnHandler.enemyRarityPkg();
+                    bluePkg.name = MoaiBlue.name;
+                    bluePkg.rarity = (int)(20 * blueRarity.Value * rawSpawnMultiplier);
+
+                    var redPkg = new RawspawnHandler.enemyRarityPkg();
+                    redPkg.name = MoaiRed.name;
+                    redPkg.rarity = (int)(40 * redRarity.Value * rawSpawnMultiplier);
+
+                    var orangePkg = new RawspawnHandler.enemyRarityPkg();
+                    orangePkg.name = MoaiOrange.name;
+                    orangePkg.rarity = (int)(22 * orangeRarity.Value * rawSpawnMultiplier);
+
+                    var goldPkg = new RawspawnHandler.enemyRarityPkg();
+                    goldPkg.name = MoaiGold.name;
+                    goldPkg.rarity = (int)(4 * goldRarity.Value * rawSpawnMultiplier);
+
+                    RawspawnHandler.setLevelSpawnWeights([normPkg, goldPkg, bluePkg, redPkg, greenPkg, purplePkg, orangePkg, piratePkg], []);
+
+                    // eliminate ship objects
+                    var ships = FindObjectsOfType<MoaiPirateShip>();
+                    foreach(var ship in ships)
+                    {
+                        if(ship && ship.gameObject) { Destroy(ship.gameObject); }
+                    }
+
                 }
-                else
-                {
-                    rawSpawnMultiplier = RawspawnHandler.getSpawnMultiplier();
-                }
-
-                var normPkg = new RawspawnHandler.enemyRarityPkg();
-                normPkg.name = MoaiEnemy.name;
-                normPkg.rarity = (int)(44 * baseRarity.Value * rawSpawnMultiplier);
-
-                var piratePkg = new RawspawnHandler.enemyRarityPkg();
-                piratePkg.name = MoaiPirate.name;
-                piratePkg.rarity = (int)(14 * pirateRarity.Value * rawSpawnMultiplier);
-
-                var greenPkg = new RawspawnHandler.enemyRarityPkg();
-                greenPkg.name = MoaiGreen.name;
-                greenPkg.rarity = (int)(30 * greenRarity.Value * rawSpawnMultiplier);
-
-                var purplePkg = new RawspawnHandler.enemyRarityPkg();
-                purplePkg.name = MoaiPurple.name;
-                purplePkg.rarity = (int)(35 * purpleRarity.Value * rawSpawnMultiplier);
-
-                var bluePkg = new RawspawnHandler.enemyRarityPkg();
-                bluePkg.name = MoaiBlue.name;
-                bluePkg.rarity = (int)(20 * blueRarity.Value * rawSpawnMultiplier);
-
-                var redPkg = new RawspawnHandler.enemyRarityPkg();
-                redPkg.name = MoaiRed.name;
-                redPkg.rarity = (int)(40 * redRarity.Value * rawSpawnMultiplier);
-
-                var orangePkg = new RawspawnHandler.enemyRarityPkg();
-                orangePkg.name = MoaiOrange.name;
-                orangePkg.rarity = (int)(22 * orangeRarity.Value * rawSpawnMultiplier);
-
-                var goldPkg = new RawspawnHandler.enemyRarityPkg();
-                goldPkg.name = MoaiGold.name;
-                goldPkg.rarity = (int)(4 * goldRarity.Value * rawSpawnMultiplier);
-
-                RawspawnHandler.setLevelSpawnWeights([normPkg, goldPkg, bluePkg, redPkg, greenPkg, purplePkg, orangePkg, piratePkg], []);
+                catch (Exception e) { Debug.LogError("Moai Enemy Error on level load: " + e.ToString()); }
 
                 orig.Invoke(self, randomSeed, newLevel);
 

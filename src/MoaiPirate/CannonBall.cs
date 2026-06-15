@@ -85,7 +85,7 @@ namespace MoaiEnemy.src.MoaiNormal
         [ClientRpc]
         void spawnExplosionClientRpc()
         {
-            Landmine.SpawnExplosion(transform.position, true, 3.3f, 5.5f, 33, 55f);
+            Landmine.SpawnExplosion(transform.position, true, 3.3f, 5.5f, 33, 30f);
             Destroy(gameObject);
         }
     }
